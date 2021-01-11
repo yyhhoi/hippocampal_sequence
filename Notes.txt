@@ -1,0 +1,32 @@
+
+==========================================================================================================
+Next steps:
+==========================================================================================================
+1. Fraction of precession
+2. Relation between the field size and precession slope/offset or pass direction
+3. Figures
+4. Processing pipeline
+5. Waiting for new data
+
+
+==========================================================================================================
+Admitted pipelines
+==========================================================================================================
+
+
+Data Conversion:
+    1. Convert_mat2pickledDF.py
+
+
+Simulation:
+    1. RomaniModel_simulate.py
+Single field analysis:
+    1. SingleField_Preprocess.py
+    2. SingleField_Analysis.py
+Pair field analysis:
+    1. PairFieldAnalysis_Preprocess.py
+    2. PairFieldAnalysis_Analysis.py
+Pass/phase precession analysis:
+    1. PassAnalysis.py
+
+
