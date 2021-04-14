@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="yiu@10.153.169.22:22 key" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
+  <component name="PublishConfigData" autoUpload="Always" serverName="hippocampus" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
     <serverData>
-      <paths name="yiu@10.153.169.22:22 key">
+      <paths name="hippocampus">
         <serverdata>
           <mappings>
-            <mapping deploy="/" local="$PROJECT_DIR$" />
+            <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
           </mappings>
           <excludedPaths>
             <excludedPath path="/check" />
             <excludedPath path="/data" />
             <excludedPath path="/matlab" />
             <excludedPath path="/results" />
+            <excludedPath path="/archive" />
           </excludedPaths>
         </serverdata>
       </paths>

@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from common.generation import freeforage, generate_spikes_bytuning
-from common.comput_utils import cacucci_mlm, midedges, normalize_distr, DirectionerMLM, DirectionerBining
+from common.comput_utils import midedges, normalize_distr, DirectionerMLM, DirectionerBining
 boxl = 20
 # tax, pos, hd = freeforage(30 * 60, 0.005, boxl, 2)
 # pos = pos / boxl

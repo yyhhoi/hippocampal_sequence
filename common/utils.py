@@ -5,15 +5,16 @@ import os
 import skimage.io as ski
 from skimage.color import rgb2gray, rgba2rgb
 
+# [f1_begin, f1_end, f2_begin, f2_end]
 AB_list = [
-        [1, 0, 0, 1],
-        [1, 0, 1, 1],  # Run from A to A+B
-        [1, 1, 0, 1],  # Run from A+B to A
+        [1, 0, 0, 1],  # Run from A to B
+        [1, 0, 1, 1],  # Run from A+B to B
+        [1, 1, 0, 1],  # Run from A to A+B
 ]
 BA_list = [
-        [0, 1, 1, 0],
+        [0, 1, 1, 0],  # Run from B to A
         [0, 1, 1, 1],  # Run from B to A+B
-        [1, 1, 1, 0],  # Run from A+B to B
+        [1, 1, 1, 0],  # Run from A+B to A
 ]
 
 def load_pickle(fp):
@@ -70,6 +71,7 @@ def p2str(pval):
 
 def stat_record(fn, overwrite, *args):
     rootdir = 'writting/stats'
+    os.makedirs(rootdir, exist_ok=True)
     pth = os.path.join(rootdir, fn)
 
     if overwrite:
@@ -95,3 +97,10 @@ def stat_record(fn, overwrite, *args):
 
 
 
+def wwtable2text(wwtable):
+    df_col = wwtable.loc['Columns', 'df']
+    df_Residual = wwtable.loc['Residual', 'df']
+    Fstat = wwtable.loc['Columns', 'F']
+    pval = wwtable.loc['Columns', 'p-value']
+    text = 'F(%d, %d)=%0.2f, p%s'%(df_col, df_Residual, Fstat, p2str(pval))
+    return text

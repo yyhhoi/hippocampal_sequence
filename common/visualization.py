@@ -8,7 +8,7 @@ from pycircstat import cdiff
 
 from common.linear_circular_r import rcc
 from common.utils import load_pickle, sigtext
-from common.comput_utils import dist_overlap, comput_passinfo, correlate, smooth_xy, clip_square, \
+from common.comput_utils import dist_overlap, correlate, smooth_xy, \
     normsig, linear_circular_gauss_density, circular_density_1d, linear_density_1d
 from common.correlogram import Crosser, ThetaEstimator, Bootstrapper
 from pycircstat.tests import watson_williams, rayleigh
@@ -20,7 +20,7 @@ from scipy.stats import pearsonr, chi2_contingency, chi2, ttest_ind, pearsonr, s
 
 def plot_correlogram(ax, df, tag, direct='A->B', overlap_key='overlap', color='gray', density=False,
                      regress=True, x_dist=True, y_dist=True, ab_key='phaselag_AB', ba_key='phaselag_BA', alpha=0.2,
-                     fontsize=8, markersize=8, ticksize=7):
+                     markersize=8, linew=1):
     """
 
     Parameters
@@ -69,12 +69,12 @@ def plot_correlogram(ax, df, tag, direct='A->B', overlap_key='overlap', color='g
                                                    ybins=800, ybound=(-np.pi, 2 * np.pi))
         ax.pcolormesh(xx, yy, zz)
     else:
-        ax.scatter(x, y, c=color, alpha=alpha, s=markersize)
-        ax.scatter(x, y + (2 * np.pi), c=color, alpha=alpha, s=markersize)
+        ax.scatter(x, y, c=color, alpha=alpha, s=markersize, marker='.')
+        ax.scatter(x, y + (2 * np.pi), c=color, alpha=alpha, s=markersize, marker='.')
 
     # Plot marginal mean
     mean_y = circmean(y_nonan)
-    ax.plot([0, 0.2], [mean_y, mean_y], c='k', linewidth=2)
+    ax.plot([0, 0.2], [mean_y, mean_y], c='k', linewidth=linew)
 
     # Regression
     regress_d = None
@@ -85,33 +85,31 @@ def plot_correlogram(ax, df, tag, direct='A->B', overlap_key='overlap', color='g
         lag_regress = 2 * np.pi * r_regress * m
         for tmpid, intercept in enumerate([2 * mul_idx * np.pi + c for mul_idx in [-2, -1, 0, 1, 2]]):
             if tmpid == 0:
-                ax.plot(r_regress, lag_regress + intercept, c='k', label='rho=%0.2f (%s)'%(r, sigtext(pval)))
+                ax.plot(r_regress, lag_regress + intercept, c='k', linewidth=linew, label='rho=%0.2f (%s)'%(r, sigtext(pval)))
             else:
-                ax.plot(r_regress, lag_regress + intercept, c='k')
+                ax.plot(r_regress, lag_regress + intercept, c='k', linewidth=linew)
 
     # X-axis
-    ax.plot([0, 1], [0, 0], c='k', alpha=0.5)
+    ax.plot([0, 1], [0, 0], c='k', alpha=1, linewidth=linew)
 
     # (y-axis) Interpolation and Smoothened histrogram
     if y_dist:
         p, _ = rayleigh(y)
         yax, yden = circular_density_1d(y_nonan, 10*np.pi, 60, (-np.pi, 3*np.pi))
 
-        ax.plot(yden/yden.max()*0.2, yax, c='k')
+        ax.plot(yden/yden.max()*0.2, yax, c='k', linewidth=linew)
 
     # (x-axis) Interpolation and Smoothened histrogram
     if x_dist:
         xax, xden = linear_density_1d(x_nonan, std=0.05, bins=100, bound=(0, 1))
-        ax.plot(xax, xden/xden.max()*(np.pi/2) - np.pi, c='k')
+        ax.plot(xax, xden/xden.max()*(np.pi/2) - np.pi, c='k', linewidth=linew)
 
     # Set title
 
     # ax.set_title("%s %s (n=%d)" % (tag, direct, num_pairs), fontsize=fontsize)
     ax.set_ylim(-np.pi, 2 * np.pi)
     ax.set_yticks([-np.pi, 0, np.pi, np.pi * 2])
-    _ = ax.set_yticklabels(['$-\pi$',  '0', '$\pi$', '$2\pi$'], fontsize=fontsize)
-    ax.set_xticks([0, 0.5, 1])
-    ax.tick_params(axis='both', which='major', labelsize=fontsize)
+    _ = ax.set_yticklabels(['$-\pi$',  '0', '$\pi$', '$2\pi$'])
     return ax, x, y, regress_d
 
 

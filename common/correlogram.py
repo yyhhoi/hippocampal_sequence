@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks, hilbert
-from .comput_utils import correlate, custum_interpolate
+# from .comput_utils import correlate, custum_interpolate
 from .utils import mat2direction, check_iter
 
 
@@ -18,23 +18,23 @@ class Crosser:
         self.nyqf = (1 / self.bin_size) / 2
         self.freq_kernel = self._set_freq_kernel()
 
-    def cross(self, tsp1, tsp2, intersect_mask=None):
-
-        if intersect_mask:
-            tsp1, tsp2 = tsp1[intersect_mask], tsp2[intersect_mask]
-
-        (N1, edges1), (N2, edges2) = self._hist(tsp1, tsp2)
-
-        r, lags = correlate(N1, N2)
-
-        lags_t = lags * self.bin_size
-
-        r_filt = self._filter(r)
-
-        if self.method == 'huxter':
-            lags_inter, r_inter = custum_interpolate(lags_t, r_filt)
-            timelag, r_at_timelag = self._find_nearest_peak(lags_inter, r_inter)
-            return timelag, r_at_timelag
+    # def cross(self, tsp1, tsp2, intersect_mask=None):
+    #
+    #     if intersect_mask:
+    #         tsp1, tsp2 = tsp1[intersect_mask], tsp2[intersect_mask]
+    #
+    #     (N1, edges1), (N2, edges2) = self._hist(tsp1, tsp2)
+    #
+    #     r, lags = correlate(N1, N2)
+    #
+    #     lags_t = lags * self.bin_size
+    #
+    #     r_filt = self._filter(r)
+    #
+    #     if self.method == 'huxter':
+    #         lags_inter, r_inter = custum_interpolate(lags_t, r_filt)
+    #         timelag, r_at_timelag = self._find_nearest_peak(lags_inter, r_inter)
+    #         return timelag, r_at_timelag
 
 
     @staticmethod
@@ -132,9 +132,13 @@ class ThetaEstimator(Crosser):
         tsp1_expanded = np.matmul(tsp1_concat.reshape(-1, 1), np.ones((1, tsp2_concat.shape[0])))
         tsp2_expanded = np.matmul(np.ones((tsp1_concat.shape[0], 1)), tsp2_concat.reshape(1, -1))
         isi = (tsp1_expanded - tsp2_expanded).flatten()
-        isi = isi[np.abs(isi) < theta_window/2]
+        # isi = isi[np.abs(isi) < theta_window/2]
+        # isibins, isiedges = np.histogram(isi,
+        #                              bins=np.arange(-self.window_width / 2 - (self.bin_size/2), self.window_width / 2 + (self.bin_size/2) + self.bin_size, self.bin_size))
+        isi = isi[np.abs(isi) < theta_window]
         isibins, isiedges = np.histogram(isi,
-                                     bins=np.arange(-self.window_width / 2 - (self.bin_size/2), self.window_width / 2 + (self.bin_size/2) + self.bin_size, self.bin_size))
+                                         bins=np.arange(-self.window_width - (self.bin_size/2), self.window_width + (self.bin_size/2) + self.bin_size, self.bin_size))
+
 
         isiedges_m = (isiedges[1:] + isiedges[:-1]) / 2
 
@@ -142,7 +146,15 @@ class ThetaEstimator(Crosser):
         signal_filt = self._filter(isibins)
         z = hilbert(signal_filt)
         alphas = np.angle(z)
-        
+
+        # Cut the intervals to -0.15s to 0.15s
+        winmask = np.abs(isiedges_m)< (theta_window/2-0.0001)
+        isiedges = isiedges[np.abs(isiedges) < (theta_window/2-0.0001)]
+        isiedges_m = isiedges_m[winmask]
+        isibins = isibins[winmask]
+        signal_filt, z, alphas = signal_filt[winmask], z[winmask], alphas[winmask]
+        isi = isi[(isi < np.max(isiedges_m)) & (isi > np.min(isiedges_m))]
+
         if np.max(signal_filt) < 0.0001:  # If no signal is found
             return default_Ttheta, np.nan, np.nan
         

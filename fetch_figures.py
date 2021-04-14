@@ -51,7 +51,7 @@ def fetch_figure1(resultplot_dir, dest_dir):
         shutil.copy(join(egdir, fn), join(dest_dir, fn))
 
     # Directionality
-    fns = ['exp_single_directionality.eps', 'colorwheel.eps', 'exp_single_fraction.eps']
+    fns = ['exp_single_directionality.eps', 'colorwheel.eps']
     for fn in fns:
         shutil.copy(join(sigdir, fn), join(dest_dir, fn))
 
@@ -60,7 +60,8 @@ def fetch_figure2(resultplot_dir, dest_dir):
     # Fig 2D, E, F
     singlepass_dir = join(resultplot_dir, 'passes', 'single')
 
-    fns = ['field_precess_pishift.eps', 'field_precess_R.eps', 'precess_examples.eps']
+    fns = ['field_precess_pishift.eps', 'field_precess_R.eps', 'precess_examples.eps',
+           'fraction_neg_slopes.eps']
     for fn in fns:
         shutil.copy(join(singlepass_dir, fn),
                     join(dest_dir, fn) )
@@ -70,13 +71,13 @@ def fetch_figure3(resultplot_dir, dest_dir):
 
     singlepass_dir = join(resultplot_dir, 'passes', 'single')
 
-    fns = ['Density_Aver.eps', 'Marginal_Concentrations.eps', 'adiff_colorbar.eps']
+    fns = ['Marginals.eps', 'AverCurves_SpikePhase.eps', 'adiff_colorbar.eps']
     for fn in fns:
         shutil.copy(join(singlepass_dir, fn),
                     join(dest_dir, fn) )
 
 
-def fetch_figure4(resultplot_dir, dest_dir, margin=3):
+def fetch_figure4(resultplot_dir, dest_dir):
     pairfield_dir = join(resultplot_dir, 'pair_fields')
 
     fns = ['examples_pair.eps', 'example_pairedspikes.eps', 'exp_pair_directionality.eps', 'exp_pair_fraction.eps']
@@ -84,87 +85,59 @@ def fetch_figure4(resultplot_dir, dest_dir, margin=3):
         shutil.copy(join(pairfield_dir, fn),
                     join(dest_dir, fn) )
 
-def fetch_figure5(resultplot_dir, dest_dir, margin=3):
-    pairfield_dir = join(resultplot_dir, 'pair_fields')
+# def fetch_figure5(resultplot_dir, dest_dir):
+#     pairfield_dir = join(resultplot_dir, 'pair_fields')
+#
+#     fns = ['examples_kld.eps', 'exp_kld_thresh.eps', 'pair_single_angles.eps', 'pair_single_angles_colorbar.eps',
+#            'pair_single_angles_test.eps']
+#     for fn in fns:
+#         shutil.copy(join(pairfield_dir, fn),
+#                     join(dest_dir, fn) )
 
-    fns = ['examples_kld.eps', 'exp_kld_thresh.eps', 'pair_single_angles.eps', 'pair_single_angles_colorbar.eps',
-           'pair_single_angles_test.eps']
+def fetch_figure5(resultplot_dir, dest_dir):
+
+    pairfield_dir = join(resultplot_dir, 'pair_fields')
+    fns = ['examples_correlogram.eps', 'exp_paircorr.eps']
     for fn in fns:
         shutil.copy(join(pairfield_dir, fn),
                     join(dest_dir, fn) )
 
+
 def fetch_figure6(resultplot_dir, dest_dir, margin=3):
-    corr_eg_dir = join(resultplot_dir, 'pair_fields', 'examples_correlogram')
 
-
-    src_pths_kld = [join(corr_eg_dir, 'corr_high_30.png'),
-                    join(corr_eg_dir, 'corr_low_11.png')]
-    dest_pths_kld = [join(dest_dir, os.path.basename(x)) for x in src_pths_kld]
-    select_cut(src_pths_kld, dest_pths_kld, margin)
-
-    paircorr_name = 'exp_paircorr.png'
-    select_cut([join(resultplot_dir, 'pair_fields', paircorr_name)],
-               [join(dest_dir, paircorr_name)], margin)
-
-
-def fetch_figure7(resultplot_dir, dest_dir, margin=3):
-    exin_eg_dir = join(resultplot_dir, 'pair_fields', 'examples_exintrinsicity')
-
-
-    src_pths_eg = [join(exin_eg_dir, 'exin_extrinsic_88.png'),
-                    join(exin_eg_dir, 'exin_inrinsic_278.png')]
-    dest_pths_eg = [join(dest_dir, os.path.basename(x)) for x in src_pths_eg]
-    select_cut(src_pths_eg, dest_pths_eg, margin)
-
-    fns = ['exp_exintrinsic.png', 'exp_exintrinsic_concentration.png']
+    pairfield_dir = join(resultplot_dir, 'pair_fields')
+    fns = ['examples_exintrinsicity.eps', 'exp_exintrinsic.eps', 'exp_exintrinsic_concentration.eps']
     for fn in fns:
-        select_cut([join(resultplot_dir, 'pair_fields', fn)],
-                   [join(dest_dir, fn)], margin)
+        shutil.copy(join(pairfield_dir, fn),
+                    join(dest_dir, fn) )
 
-    fn = 'exp_simdissim_exintrinsic2d.png'
-    select_cut([join(resultplot_dir, 'pair_fields', 'pairangle_similarity', fn)],
-               [join(dest_dir, fn)], margin)
+    shutil.copy(join(pairfield_dir, 'pairangle_similarity', 'exp_simdissim_exintrinsic2d.eps'),
+                join(dest_dir, 'exp_simdissim_exintrinsic2d.eps') )
 
-def fetch_figure8(resultplot_dir, dest_dir, margin=3):
-    src_dir = join(resultplot_dir, 'passes', 'pair')
+def fetch_figure7(resultplot_dir, dest_dir):
+    src_dir = join(resultplot_dir, 'pair_fields')
 
-    fns = ['4Cases_Colorbar.png',
-           '4Cases_Illustrations.png',
-           '4Cases_Pairlag-Onset.png',
-           '4Caes_nspikes.png']
+    fns = ['exp_4case.eps']
 
     for fn in fns:
-        select_cut([join(src_dir, fn)],
-                   [join(dest_dir, fn)], margin)
+        shutil.copy(join(src_dir, fn),
+                    join(dest_dir, fn) )
 
-def fetch_figure9(resultplot_dir, dest_dir, margin=3):
-    srcdir_single = join(resultplot_dir, 'sim', 'single_field')
-    srcdir_pass = join(resultplot_dir, 'sim', 'passes')
+def fetch_figure8(resultplot_dir, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    src_dir = join(resultplot_dir, 'sim')
+    fns = ['SIM_single.eps']
+    for fn in fns:
+        shutil.copy(join(src_dir, fn),
+                    join(dest_dir, fn) )
 
-    fns_single = ['sim_single_directionality.png']
-    fns2_passes = ['sim_adiff_colorbar.png', 'sim_aver_precess_curve.png', 'sim_density.png',
-            'sim_field_precess_2Dscatter.png', 'sim_field_precess_pishift.png', 'sim_field_precess_R.png',
-            'sim_overall_bestprecession.png', 'sim_slices.png', 'sim_spike_phase_highlow.png']
-
-    for fn in fns_single:
-        select_cut([join(srcdir_single, fn)], [join(dest_dir, fn)], margin)
-    for fn in fns2_passes:
-        select_cut([join(srcdir_pass, fn)], [join(dest_dir, fn)], margin)
-
-def fetch_figure10(resultplot_dir, dest_dir, margin=3):
-    srcdir_pair = join(resultplot_dir, 'sim', 'pair_fields')
-
-    fns_single = [
-        'sim_exintrinsic.png',
-        'sim_pair_single_angles_colorbar.png',
-        'sim_pair_single_angles.png',
-        'sim_exintrinsic_concentration.png',
-        'sim_pair_directionality.png',
-        'sim_paircorr.png']
-
-    for fn in fns_single:
-        select_cut([join(srcdir_pair, fn)], [join(dest_dir, fn)], margin)
-
+def fetch_figure9(resultplot_dir, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    src_dir = join(resultplot_dir, 'sim')
+    fns = ['SIM_pair.eps']
+    for fn in fns:
+        shutil.copy(join(src_dir, fn),
+                    join(dest_dir, fn) )
 
 resultplot_dir = '/home/yiu/projects/hippocampus/result_plots'
 fig_dir = '/home/yiu/projects/hippocampus/writting/figures'
@@ -172,10 +145,9 @@ fig_dir = '/home/yiu/projects/hippocampus/writting/figures'
 # fetch_figure1(resultplot_dir, join(fig_dir, 'fig1'))
 # fetch_figure2(resultplot_dir, join(fig_dir, 'fig2'))
 # fetch_figure3(resultplot_dir, join(fig_dir, 'fig3'))
-fetch_figure4(resultplot_dir, join(fig_dir, 'fig4'))
+# fetch_figure4(resultplot_dir, join(fig_dir, 'fig4'))
 # fetch_figure5(resultplot_dir, join(fig_dir, 'fig5'))
-# fetch_figure6(resultplot_dir, join(fig_dir, 'fig6'))
-# fetch_figure7(resultplot_dir, join(fig_dir, 'fig7'))
-# fetch_figure8(resultplot_dir, join(fig_dir, 'fig8'))
-# fetch_figure9(resultplot_dir, join(fig_dir, 'fig9'))
-# fetch_figure10(resultplot_dir, join(fig_dir, 'fig10'))
+fetch_figure6(resultplot_dir, join(fig_dir, 'fig6'))
+fetch_figure7(resultplot_dir, join(fig_dir, 'fig7'))
+fetch_figure8(resultplot_dir, join(fig_dir, 'fig8'))
+fetch_figure9(resultplot_dir, join(fig_dir, 'fig9'))
