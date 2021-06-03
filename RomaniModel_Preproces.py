@@ -17,7 +17,7 @@ figext = 'png'
 
 
 
-def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NShuffles=200, subsample_fraction=0.4, save_pth=None):
+def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NShuffles=200, save_pth=None):
     """
 
     Parameters
@@ -38,6 +38,8 @@ def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NSh
     -------
 
     """
+
+    subsample_fraction = 0.4
     datadict = dict(num_spikes=[], border=[], aver_rate=[],
                     rate_angle=[], rate_R=[], rate_R_pval=[], minocc=[],
                     precess_df=[], precess_angle=[], precess_angle_low=[], precess_R=[],
@@ -47,7 +49,6 @@ def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NSh
     aedges = np.linspace(-np.pi, np.pi, 36)
     abind = aedges[1] - aedges[0]
     sp_binwidth = 2 * np.pi / 16
-
     tunner = IndataProcessor(Indata, vthresh=vthresh, sthresh=sthresh, minpasstime=0.4)
     wave = dict(tax=Indata['t'].to_numpy(), phase=Indata['phase'].to_numpy(),
                 theta=np.ones(Indata.shape[0]))
@@ -127,7 +128,7 @@ def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NSh
                                spikeangle='spikeangle')
         accept_mask = (~passdf['rejected']) & (passdf['chunked'] < 2)
         passdf['excluded_for_precess'] = ~accept_mask
-        precessdf, precess_angle, precess_R, _ = get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, minocc,
+        precessdf, precess_angle, precess_R, _ = get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict,
                                                                       field_d=radius*2, kappa=kappa_precess, bins=None)
         fitted_precessdf = precessdf[precessdf['fitted']].reset_index(drop=True)
 
@@ -195,7 +196,7 @@ def single_field_preprocess_Romani(simdata, radius=2, vthresh=2, sthresh=80, NSh
 
 
 
-def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh=80, subsample_fraction=0.4, NShuffles=200):
+def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh=80, NShuffles=200):
     pairdata_dict = dict(neuron1id=[], neuron2id=[],
                          neuron1pos=[], neuron2pos=[], neurondist=[],
                          # overlap is calculated afterward
@@ -217,7 +218,7 @@ def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh
     Indata, SpikeData, NeuronPos = simdata['Indata'], simdata['SpikeData'], simdata['NeuronPos']
     wave = dict(tax=Indata['t'].to_numpy(), phase=Indata['phase'].to_numpy(),
                 theta=np.ones(Indata.shape[0]))
-
+    subsample_fraction = 0.25
     # setting
     minpasstime = 0.4
     minspiketresh = 14
@@ -231,8 +232,10 @@ def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh
     aedges_precess = np.linspace(-np.pi, np.pi, 6)
     field_d = radius*2
 
+
+
     # Precomputation
-    tunner = IndataProcessor(Indata, vthresh=vthresh, sthresh=sthresh, minpasstime=0.4)
+    tunner = IndataProcessor(Indata, vthresh=vthresh, sthresh=sthresh, minpasstime=minpasstime)
     interpolater_angle = interp1d(tunner.t, tunner.angle)
     interpolater_x = interp1d(tunner.t, tunner.x)
     interpolater_y = interp1d(tunner.t, tunner.y)
@@ -350,7 +353,7 @@ def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh
             # Precession1 & Post-hoc exclusion for 1st field
             accept_mask1 = (~passdf1['rejected']) & (passdf1['chunked'] < 2)
             passdf1['excluded_for_precess'] = ~accept_mask1
-            precessdf1, precessangle1, precessR1, _ = get_single_precessdf(passdf1, precesser, precess_filter, neuro_keys_dict, occbins1.min(),
+            precessdf1, precessangle1, precessR1, _ = get_single_precessdf(passdf1, precesser, precess_filter, neuro_keys_dict,
                                                                            field_d=field_d, kappa=kappa_precess, bins=None)
             fitted_precessdf1 = precessdf1[precessdf1['fitted']].reset_index(drop=True)
             if (precessangle1 is not None) and (fitted_precessdf1.shape[0] > 0):
@@ -370,7 +373,7 @@ def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh
             # Precession2 & Post-hoc exclusion for 2nd field
             accept_mask2 = (~passdf2['rejected']) & (passdf2['chunked'] < 2)
             passdf2['excluded_for_precess'] = ~accept_mask2
-            precessdf2, precessangle2, precessR2, _ = get_single_precessdf(passdf2, precesser, precess_filter, neuro_keys_dict, occbins2.min(),
+            precessdf2, precessangle2, precessR2, _ = get_single_precessdf(passdf2, precesser, precess_filter, neuro_keys_dict,
                                                                            field_d=field_d, kappa=kappa_precess, bins=None)
             fitted_precessdf2 = precessdf2[precessdf2['fitted']].reset_index(drop=True)
             if (precessangle2 is not None) and (fitted_precessdf2.shape[0] > 0):
@@ -562,15 +565,16 @@ def pair_field_preprocess_Romani(simdata, save_pth, radius=2, vthresh=2, sthresh
 
 
 def main():
+
     # Single field
     simdata = load_pickle('results/sim/raw/squarematch.pickle')
-    single_field_preprocess_Romani(simdata, save_pth='results/sim/singlefield_df_square_sub0325_AllChunk.pickle',
-                                   subsample_fraction=0.325)
+    single_field_preprocess_Romani(simdata, save_pth='results/sim/singlefield_df.pickle')
 
     # # Pair field
-    # simdata = load_pickle('results/sim/raw/squarematch.pickle')
-    # pair_field_preprocess_Romani(simdata, save_pth='results/sim/pairfield_df_square_sub025_AllChunk.pickle',
-    #                              subsample_fraction=0.25)
+    simdata = load_pickle('results/sim/raw/squarematch.pickle')
+    pair_field_preprocess_Romani(simdata, save_pth='results/sim/pairfield_df.pickle')
+
+
 
 if __name__ == '__main__':
     main()

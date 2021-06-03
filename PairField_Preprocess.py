@@ -12,7 +12,8 @@ from scipy.interpolate import interp1d
 from common.script_wrappers import PrecessionProcesser, PrecessionFilter, construct_passdf_sim, \
     construct_pairedpass_df_sim, get_single_precessdf, compute_precessangle
 from common.linear_circular_r import rcc
-from common.utils import load_pickle, stat_record
+from common.utils import load_pickle
+from common.stattests import stat_record
 from common.comput_utils import dist_overlap, normsig, append_extrinsicity, linear_circular_gauss_density, \
     find_pair_times, \
     IndataProcessor, check_border, window_shuffle_gen, \
@@ -52,7 +53,6 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
     aedges = np.linspace(-np.pi, np.pi, 36)
     abind = aedges[1] - aedges[0]
     sp_binwidth = 5
-
     aedges_precess = np.linspace(-np.pi, np.pi, 6)
     kappa_precess = 1
     precess_filter = PrecessionFilter()
@@ -176,7 +176,7 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
                 # Precession1 & Post-hoc exclusion for 1st field
                 accept_mask1 = (~passdf1['rejected']) & (passdf1['chunked'] < 2)
                 passdf1['excluded_for_precess'] = ~accept_mask1
-                precessdf1, precessangle1, precessR1, _ = get_single_precessdf(passdf1, precesser, precess_filter, neuro_keys_dict, occbins1.min(),
+                precessdf1, precessangle1, precessR1, _ = get_single_precessdf(passdf1, precesser, precess_filter, neuro_keys_dict,
                                                                                field_d=field_d1, kappa=kappa_precess, bins=None)
                 fitted_precessdf1 = precessdf1[precessdf1['fitted']].reset_index(drop=True)
                 if (precessangle1 is not None) and (fitted_precessdf1.shape[0] > 0):
@@ -196,7 +196,7 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
                 # Precession2 & Post-hoc exclusion for 2nd field
                 accept_mask2 = (~passdf2['rejected']) & (passdf2['chunked'] < 2)
                 passdf2['excluded_for_precess'] = ~accept_mask2
-                precessdf2, precessangle2, precessR2, _ = get_single_precessdf(passdf2, precesser, precess_filter, neuro_keys_dict, occbins2.min(),
+                precessdf2, precessangle2, precessR2, _ = get_single_precessdf(passdf2, precesser, precess_filter, neuro_keys_dict,
                                                                                field_d=field_d2, kappa=kappa_precess, bins=None)
                 fitted_precessdf2 = precessdf2[precessdf2['fitted']].reset_index(drop=True)
                 if (precessangle2 is not None) and (fitted_precessdf2.shape[0] > 0):
@@ -310,10 +310,13 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
                 normprobp_mlm[np.isnan(normprobp_mlm)] = 0
 
                 # Time shift shuffling
-                rate_R_pvalp = timeshift_shuffle_exp_wrapper(paired_tsp_list, t_all, rate_Rp,
-                                                             NShuffles, mlmer_pair,
-                                                             interpolater_x, interpolater_y,
-                                                             interpolater_angle, trange)
+                if np.isnan(rate_Rp):
+                    rate_R_pvalp = np.nan
+                else:
+                    rate_R_pvalp = timeshift_shuffle_exp_wrapper(paired_tsp_list, t_all, rate_Rp,
+                                                                 NShuffles, mlmer_pair,
+                                                                 interpolater_x, interpolater_y,
+                                                                 interpolater_angle, trange)
 
                 # Rates
                 with np.errstate(divide='ignore', invalid='ignore'):  # None means no sample
@@ -752,13 +755,16 @@ def plot_pair_examples(df, vthresh=5, sthresh=3, plot_dir=None):
 if __name__ == '__main__':
     # Experiment's data preprocessing
     data_pth = 'data/emankindata_processed_withwave.pickle'
-    save_pth = 'results/exp/pair_field/pairfield_df.pickle'
-    plot_dir = 'result_plots/pair_fields/'
-    expdf = load_pickle(data_pth)
+    save_pth = 'results/emankin/pairfield_df.pickle'
 
+    expdf = load_pickle(data_pth)
     pair_field_preprocess_exp(expdf, vthresh=5, sthresh=3, NShuffles=200, save_pth=save_pth)
-    #
+
+
+
     # # Plotting
+    # plot_dir = 'result_plots/pair_fields/'
+
     # plot_pair_examples(expdf, vthresh=5, sthresh=3, plot_dir=plot_dir)
 
 

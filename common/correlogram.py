@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks, hilbert
 # from .comput_utils import correlate, custum_interpolate
-from .utils import mat2direction, check_iter
+# from .utils import mat2direction, check_iter
 
-
+from common.utils import mat2direction
 
 
 class Crosser:
@@ -155,7 +155,7 @@ class ThetaEstimator(Crosser):
         signal_filt, z, alphas = signal_filt[winmask], z[winmask], alphas[winmask]
         isi = isi[(isi < np.max(isiedges_m)) & (isi > np.min(isiedges_m))]
 
-        if np.max(signal_filt) < 0.0001:  # If no signal is found
+        if (np.max(signal_filt) < 0.0001) or (isi.shape[0]==0):  # If no signal is found
             return default_Ttheta, np.nan, np.nan
         
         # Find phase at 0 lag

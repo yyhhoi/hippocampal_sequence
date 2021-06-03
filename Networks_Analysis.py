@@ -19,7 +19,8 @@ from common.comput_utils import linear_gauss_density, segment_passes, compute_st
 from common.linear_circular_r import rcc
 from common.script_wrappers import DirectionalityStatsByThresh, permutation_test_average_slopeoffset
 from common.shared_vars import total_figw, ticksize, fontsize, dpi
-from common.utils import load_pickle, stat_record, p2str
+from common.utils import load_pickle
+from common.stattests import p2str, stat_record
 from common.visualization import customlegend, plot_marginal_slices
 
 legendsize = 8

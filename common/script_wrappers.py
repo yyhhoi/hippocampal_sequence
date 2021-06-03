@@ -145,15 +145,17 @@ class PrecessionProcesser:
             rcc_m, rcc_c, rcc_rho, rcc_p = regress['aopt'], regress['phi0'], regress['rho'], regress['p']
 
             # Wave
-            try:
+            wave_mint, wave_maxt = self.wave['tax'].min(), self.wave['tax'].max()
+            if (wave_mint < t.min()) and (wave_maxt > t.max()):
                 wid1 = np.where(self.wave['tax'] < t.min())[0][-1]
                 wid2 = np.where(self.wave['tax'] > t.max())[0][0]
-                wave_t = self.wave['tax'][wid1:wid2]
-                wave_phase = self.wave['phase'][wid1:wid2]
-                wave_theta = self.wave['theta'][wid1:wid2]
-            except:
-                import pdb
-                pdb.set_trace()
+            else:
+                wid1 = np.argmin( np.abs(self.wave['tax']-t.min()))
+                wid2 = np.argmin( np.abs(self.wave['tax']-t.max()))
+
+            wave_t = self.wave['tax'][wid1:wid2]
+            wave_phase = self.wave['phase'][wid1:wid2]
+            wave_theta = self.wave['theta'][wid1:wid2]
 
 
             # Number of theta cycles, and cycles that have spikes
@@ -284,7 +286,7 @@ def compute_precessangle(pass_angles, pass_nspikes, precess_mask, kappa=None, bi
         raise AssertionError('Either one of the arguments kappa and bins must be specified.')
     if (kappa is not None) and (bins is not None):
         raise AssertionError('Argument kappa and bins cannot be both specified.')
-
+    numpass = pass_angles[precess_mask].shape[0]
     if kappa is not None:  # Use KDE with concentration kappa
         pass_ax, passbins_p = circular_density_1d(pass_angles[precess_mask], kappa, 100, (-np.pi, np.pi))
         pass_ax, passbins_np = circular_density_1d(pass_angles[~precess_mask], kappa, 100, (-np.pi, np.pi))
@@ -302,11 +304,10 @@ def compute_precessangle(pass_angles, pass_nspikes, precess_mask, kappa=None, bi
     # Best direction
     bestangle = circmean(pass_ax, w=norm_density, d=pass_ax[1] - pass_ax[0])
     R = resultant_vector_length(pass_ax, w=norm_density, d=pass_ax[1] - pass_ax[0])
-
     return bestangle, R, (norm_density, passbins_p, passbins_np, spikebins)
 
 
-def get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, min_occbin, field_d, kappa=None, bins=None):
+def get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, field_d, kappa=None, bins=None):
     """
         1. Converting dataframe of passes to dataframe of precession.
         2. Computing best angle and R for precession.
@@ -315,7 +316,6 @@ def get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, min
     passdf
     precesser
     precess_filter
-    min_occbin
 
     Returns
     -------
@@ -414,7 +414,7 @@ def permutation_test_average_slopeoffset(slopes_high, offsets_high, slopes_low, 
     all_shuf_offset_diff = np.zeros(NShuffles)
     for i in range(NShuffles):
         if i % 10 == 0:
-            print('Shuffling %d/%d'%(i, NShuffles))
+            print('\rShuffling %d/%d'%(i, NShuffles), flush=True, end='')
         np.random.seed(i)
         ran_vec = np.random.permutation(ntotal)
 
@@ -426,7 +426,7 @@ def permutation_test_average_slopeoffset(slopes_high, offsets_high, slopes_low, 
 
         all_shuf_slope_diff[i] = np.abs(shuf_regress_high['aopt'] - shuf_regress_low['aopt'])
         all_shuf_offset_diff[i] = np.abs(cdiff(shuf_regress_high['phi0'], shuf_regress_low['phi0']))
-
+    print()
     pval_slope = 1- np.mean(np.abs(slope_diff) > np.abs(all_shuf_slope_diff))
     pval_offset = 1 - np.mean(np.abs(offset_diff) > np.abs(all_shuf_offset_diff))
 
@@ -476,7 +476,7 @@ def permutation_test_arithmetic_average_slopeoffset(slopes_high, offsets_high, s
     all_shuf_offset_diff = np.zeros(NShuffles)
     for i in range(NShuffles):
         if i % 10 == 0:
-            print('Shuffling %d/%d'%(i, NShuffles))
+            print('\rShuffling %d/%d'%(i, NShuffles), flush=True, end='')
         np.random.seed(i)
         ran_vec = np.random.permutation(ntotal)
 
@@ -489,7 +489,7 @@ def permutation_test_arithmetic_average_slopeoffset(slopes_high, offsets_high, s
 
         all_shuf_slope_diff[i] = np.abs(shufmean_slope_high - shufmean_slope_low)
         all_shuf_offset_diff[i] = np.abs(cdiff(shufmean_offset_high, shufmean_offset_low))
-
+    print()
     pval_slope = 1- np.mean(np.abs(slope_diff) > np.abs(all_shuf_slope_diff))
     pval_offset = 1 - np.mean(np.abs(offset_diff) > np.abs(all_shuf_offset_diff))
 

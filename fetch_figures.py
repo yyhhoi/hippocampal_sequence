@@ -58,7 +58,7 @@ def fetch_figure1(resultplot_dir, dest_dir):
 def fetch_figure2(resultplot_dir, dest_dir):
 
     # Fig 2D, E, F
-    singlepass_dir = join(resultplot_dir, 'passes', 'single')
+    singlepass_dir = join(resultplot_dir, 'single_field')
 
     fns = ['field_precess_pishift.eps', 'field_precess_R.eps', 'precess_examples.eps',
            'fraction_neg_slopes.eps']
@@ -69,7 +69,7 @@ def fetch_figure2(resultplot_dir, dest_dir):
 
 def fetch_figure3(resultplot_dir, dest_dir):
 
-    singlepass_dir = join(resultplot_dir, 'passes', 'single')
+    singlepass_dir = join(resultplot_dir, 'single_field')
 
     fns = ['Marginals.eps', 'AverCurves_SpikePhase.eps', 'adiff_colorbar.eps']
     for fn in fns:
@@ -80,7 +80,7 @@ def fetch_figure3(resultplot_dir, dest_dir):
 def fetch_figure4(resultplot_dir, dest_dir):
     pairfield_dir = join(resultplot_dir, 'pair_fields')
 
-    fns = ['examples_pair.eps', 'example_pairedspikes.eps', 'exp_pair_directionality.eps', 'exp_pair_fraction.eps']
+    fns = ['examples_pair.eps', 'example_pairedspikes.eps', 'exp_pair_directionality.eps']
     for fn in fns:
         shutil.copy(join(pairfield_dir, fn),
                     join(dest_dir, fn) )
@@ -103,18 +103,24 @@ def fetch_figure5(resultplot_dir, dest_dir):
                     join(dest_dir, fn) )
 
 
-def fetch_figure6(resultplot_dir, dest_dir, margin=3):
+def fetch_figure6(resultplot_dir, dest_dir):
 
     pairfield_dir = join(resultplot_dir, 'pair_fields')
-    fns = ['examples_exintrinsicity.eps', 'exp_exintrinsic.eps', 'exp_exintrinsic_concentration.eps']
+    fns = ['examples_exintrinsicity.eps', 'exp_exintrinsic.eps', 'exp_simdissim_exintrinsic2d.eps']
     for fn in fns:
         shutil.copy(join(pairfield_dir, fn),
                     join(dest_dir, fn) )
 
-    shutil.copy(join(pairfield_dir, 'pairangle_similarity', 'exp_simdissim_exintrinsic2d.eps'),
-                join(dest_dir, 'exp_simdissim_exintrinsic2d.eps') )
 
 def fetch_figure7(resultplot_dir, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    src_dir = join(resultplot_dir, 'pair_fields')
+    fns = ['exp_intrinsic_precession.eps']
+    for fn in fns:
+        shutil.copy(join(src_dir, fn),
+                    join(dest_dir, fn) )
+
+def fetch_figureS1(resultplot_dir, dest_dir):
     src_dir = join(resultplot_dir, 'pair_fields')
 
     fns = ['exp_4case.eps']
@@ -139,6 +145,8 @@ def fetch_figure9(resultplot_dir, dest_dir):
         shutil.copy(join(src_dir, fn),
                     join(dest_dir, fn) )
 
+
+
 resultplot_dir = '/home/yiu/projects/hippocampus/result_plots'
 fig_dir = '/home/yiu/projects/hippocampus/writting/figures'
 
@@ -147,7 +155,8 @@ fig_dir = '/home/yiu/projects/hippocampus/writting/figures'
 # fetch_figure3(resultplot_dir, join(fig_dir, 'fig3'))
 # fetch_figure4(resultplot_dir, join(fig_dir, 'fig4'))
 # fetch_figure5(resultplot_dir, join(fig_dir, 'fig5'))
-fetch_figure6(resultplot_dir, join(fig_dir, 'fig6'))
-fetch_figure7(resultplot_dir, join(fig_dir, 'fig7'))
+# fetch_figure6(resultplot_dir, join(fig_dir, 'fig6'))
+# fetch_figure7(resultplot_dir, join(fig_dir, 'fig7'))
+# fetch_figureS1(resultplot_dir, join(fig_dir, 'figS1'))
 fetch_figure8(resultplot_dir, join(fig_dir, 'fig8'))
 fetch_figure9(resultplot_dir, join(fig_dir, 'fig9'))

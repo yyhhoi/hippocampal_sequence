@@ -13,13 +13,16 @@ from pycircstat.descriptive import mean as circmean
 from scipy.stats import ranksums, chi2_contingency, spearmanr, chisquare, ttest_1samp, linregress, binom_test
 
 from common.linear_circular_r import rcc
-from common.utils import load_pickle, stat_record, sigtext, p2str
+from common.utils import load_pickle
+from common.stattests import p2str, stat_record, wwtable2text, my_ww_2samp, my_kruskal_2samp, my_chi_2way, \
+    my_fisher_2way, my_kruskal_3samp, my_chi_1way, my_ttest_1samp
 from common.comput_utils import midedges, circular_density_1d, repeat_arr, unfold_binning_2d, \
     linear_circular_gauss_density, circ_ktest, ranksums, shiftcyc_full2half
 
 from common.visualization import plot_marginal_slices, plot_correlogram, customlegend
 
-from common.script_wrappers import DirectionalityStatsByThresh, permutation_test_average_slopeoffset
+from common.script_wrappers import DirectionalityStatsByThresh, permutation_test_average_slopeoffset, \
+    permutation_test_arithmetic_average_slopeoffset
 from common.shared_vars import total_figw, fontsize, ticksize, legendsize, titlesize, dpi
 import warnings
 warnings.filterwarnings("ignore")
@@ -68,38 +71,34 @@ def omniplot_singlefields_Romani(simdf, ax):
     # Binomial test for all fields
     signum_all, n_all = all_dict['shift_signum'][0], all_dict['n'][0]
     p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
-    stat_txt = 'Binomial test, greater than p=0.05, %d/%d, p%s'%(signum_all, n_all, p2str(p_binom))
+    stat_txt = r'Binomial test, greater than p=0.05, %d/%d=%0.4f, $p=%s$'%(signum_all, n_all, signum_all/n_all, p2str(p_binom))
     stat_record(stat_fn, False, stat_txt)
     # ax[1].annotate('Sig. Frac. (All)\n%d/%d=%0.3f\np%s'%(signum_all, n_all, signum_all/n_all, p2str(p_binom)), xy=(0.1, 0.5), xycoords='axes fraction', fontsize=legendsize)
 
-    # Statistical testing
+    # # Statistical test
     for idx, ntresh in enumerate(spike_threshs):
-        rs_bord_stat, rs_bord_pR = ranksums(border_dict['allR'][idx], nonborder_dict['allR'][idx])
+        stat_record(stat_fn, False, '======= Threshold=%d ======'%(ntresh))
+        # KW test for border median R
+        rs_bord_pR, (border_n, nonborder_n), mdns, rs_txt = my_kruskal_2samp(border_dict['allR'][idx], nonborder_dict['allR'][idx], 'border', 'nonborder')
+        stat_record(stat_fn, False, "SIM, Median R, border vs non-border: %s" % (rs_txt))
 
+        # Chisquared test for border fractions
         contin = pd.DataFrame({'border': [border_dict['shift_signum'][idx],
                                           border_dict['shift_nonsignum'][idx]],
                                'nonborder': [nonborder_dict['shift_signum'][idx],
-                                             nonborder_dict['shift_nonsignum'][idx]]})
-        try:
-            chi_stat, chi_pborder, chi_dof, _ = chi2_contingency(contin)
-        except ValueError:
-            chi_stat, chi_pborder, chi_dof = 0, 1, 1
+                                             nonborder_dict['shift_nonsignum'][idx]]}).to_numpy()
+        chi_pborder, _, txt_chiborder = my_chi_2way(contin)
+        _, _, fishtxt = my_fisher_2way(contin)
+        stat_record(stat_fn, False, "SIM, Significant fraction, border vs non-border: %s, %s" % (txt_chiborder, fishtxt))
 
-        border_n, nonborder_n = border_dict['n'][idx], nonborder_dict['n'][idx]
-        stat_record(stat_fn, False, 'Sim BorderEffect Frac, Thresh=%d, \chi^2(%d, N=%d)=%0.2f, p%s' % \
-                    (ntresh, chi_dof, border_n + nonborder_n, chi_stat, p2str(chi_pborder)))
 
-        mdnR_border, mdnR2_nonrboder = border_dict['medianR'][idx], nonborder_dict['medianR'][idx]
-        stat_record(stat_fn, False,
-                    'Sim BorderEffect MedianR:%0.2f-%0.2f, Thresh=%d, U(N_{border}=%d, N_{nonborder}=%d)=%0.2f, p%s' % \
-                    (mdnR_border, mdnR2_nonrboder, ntresh, border_n, nonborder_n, rs_bord_stat, p2str(rs_bord_pR)))
 
 
     # Plotting asthestic
     ax_ylabels = ['Median R', "Sig. Frac.", "Data Frac."]
     for axid in range(3):
-        ax[axid].set_xticks([0, 100, 200, 300, 400])
-        ax[axid].set_xticklabels(['0', '', '200', '', '400'])
+        ax[axid].set_xticks([0, 200, 400, 600])
+        ax[axid].set_xticks(np.arange(0, 601, 100), minor=True)
 
         ax[axid].set_ylabel(ax_ylabels[axid], fontsize=fontsize)
         ax[axid].tick_params(axis='both', which='major', labelsize=ticksize)
@@ -110,31 +109,25 @@ def omniplot_singlefields_Romani(simdf, ax):
 
     customlegend(ax[0], fontsize=legendsize, loc='lower left', bbox_to_anchor=(0.5, 0.5))
 
-    ax[0].set_yticks([0, 0.2, 0.4, 0.6])
-    ax[0].set_yticks(np.arange(0, 0.7, 0.1), minor=True)
-    ax[1].set_yticks([0, 0.5, 1])
-    ax[1].set_yticklabels(['0', '', '1'])
-    ax[1].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+    ax[0].set_yticks([0, 0.1, 0.2, 0.3])
+
+
+    ax[1].set_yticks([0, 0.1, 0.2])
+    ax[1].set_yticks(np.arange(0, 0.25, 0.05), minor=True)
+
     ax[2].set_yticks([0, 0.5, 1])
     ax[2].set_yticklabels(['0', '', '1'])
     ax[2].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
 
 
 def plot_field_bestprecession_Romani(simdf, ax):
-    anglediff_edges = np.linspace(0, np.pi, 50)
-    slope_edges = np.linspace(-2, 0, 50)
-    offset_edges = np.linspace(0, 2 * np.pi, 50)
-    angle_title = r'$d(\theta_{pass}, \theta_{rate})$' + ' (rad)'
-    absangle_title  = r'$|d(\theta_{pass}, \theta_{rate})|$' + ' (rad)'
-    nap_thresh = 1
+
+
 
     print('Plot field best precession')
     stat_fn = 'fig8_SIM_field_precess.txt'
     stat_record(stat_fn, True)
-    allR = []
-    allca_ntotal = simdf.shape[0]
-    all_shufp = []
-
+    nap_thresh = 1
 
     # Stack data
     numpass_mask = simdf['numpass_at_precess'].to_numpy() >= nap_thresh
@@ -190,11 +183,11 @@ def plot_field_bestprecession_Romani(simdf, ax):
     ax[0].tick_params(labelsize=ticksize)
     ax[0].spines["top"].set_visible(False)
     ax[0].spines["right"].set_visible(False)
-    ax[0].set_xlabel(absangle_title, fontsize=fontsize)
+    ax[0].set_xlabel(r'$|d(\theta_{pass}, \theta_{rate})|$' + ' (rad)', fontsize=fontsize)
     ax[0].set_ylabel('Relative count', fontsize=fontsize, labelpad=5)
     customlegend(ax[0], fontsize=legendsize, bbox_to_anchor=[0, 0.5], loc='lower left')
-    ax[0].annotate('p%s'%(p2str(pval)), xy=(0.4, 0.5), xycoords='axes fraction', fontsize=legendsize, color='green')
-    stat_record(stat_fn, False, "SIM Spearman's correlation: r_s(%d)=%0.2f, p%s " % (precess_allcount, rho, p2str(pval)))
+    ax[0].annotate('p=%s'%(p2str(pval)), xy=(0.4, 0.5), xycoords='axes fraction', fontsize=legendsize, color='green')
+    stat_record(stat_fn, False, r"SIM Spearman's correlation: $r_{s(%d)}=%0.2f, p=%s$ " % (precess_allcount, rho, p2str(pval)))
 
 
 
@@ -239,9 +232,9 @@ def plot_field_bestprecession_Romani(simdf, ax):
     ax[2].set_yticklabels([])
     ax[2].set_xticklabels([])
     v_pval, v_stat = vtest(adiff, mu=np.pi)
-    ax[2].annotate('p%s'%(p2str(v_pval)), xy=(0.25, 0.95), xycoords='axes fraction', fontsize=legendsize)
-    ax[2].annotate(r'$\theta_{rate}$', xy=(0.85, 0.35), xycoords='axes fraction', fontsize=fontsize)
-    stat_record(stat_fn, False, 'SIM, d(precess, rate), V(%d)=%0.2f, p%s' % (bins.sum(), v_stat, p2str(v_pval)))
+    ax[2].annotate('p=%s'%(p2str(v_pval)), xy=(0.25, 0.95), xycoords='axes fraction', fontsize=legendsize)
+    ax[2].annotate(r'$\theta_{rate}$', xy=(0.95, 0.525), xycoords='axes fraction', fontsize=fontsize + 1)
+    stat_record(stat_fn, False, r'SIM, d(precess, rate), $V_{(%d)}=%0.2f, p=%s$' % (bins.sum(), v_stat, p2str(v_pval)))
     ax[2].set_ylabel('All\npasses', fontsize=fontsize)
 
     # Plot Histogram: d(precess_low, rate)
@@ -261,14 +254,14 @@ def plot_field_bestprecession_Romani(simdf, ax):
     ax[3].set_yticklabels([])
     ax[3].set_xticklabels([])
     v_pval, v_stat = vtest(adiff, mu=np.pi)
-    ax[3].annotate('p%s'%(p2str(v_pval)), xy=(0.25, 0.95), xycoords='axes fraction', fontsize=legendsize)
-    ax[3].annotate(r'$\theta_{rate}$', xy=(0.85, 0.35), xycoords='axes fraction', fontsize=fontsize)
-    stat_record(stat_fn, False, 'SIM, d(precess_low, rate), V(%d)=%0.2f, p%s' % (bins.sum(), v_stat, p2str(v_pval)))
+    ax[3].annotate('p=%s'%(p2str(v_pval)), xy=(0.25, 0.95), xycoords='axes fraction', fontsize=legendsize)
+    ax[3].annotate(r'$\theta_{rate}$', xy=(0.95, 0.525), xycoords='axes fraction', fontsize=fontsize + 1)
+    stat_record(stat_fn, False, r'SIM, d(precess_low, rate), $V_{(%d)}=%0.2f, p=%s$' % (bins.sum(), v_stat, p2str(v_pval)))
     ax[3].set_ylabel('Low-spike\npasses', fontsize=fontsize)
 
 
 
-def plot_both_slope_offset_Romani(simdf, fig, ax, NShuffles=10):
+def plot_both_slope_offset_Romani(simdf, ax):
 
     def norm_div(target_hist, divider_hist):
         target_hist_norm = target_hist / divider_hist.reshape(-1, 1)
@@ -341,108 +334,55 @@ def plot_both_slope_offset_Romani(simdf, fig, ax, NShuffles=10):
     offset_adiff, offset_norm = unfold_binning_2d(offset_normbins, offset_xedm, offset_yedm)
     slope_adiff, slope_norm = unfold_binning_2d(slope_normbins, slope_xedm, slope_yedm)
 
+
     # Linear-circular regression
     regress = rcc(offset_adiff, offset_norm)
     offset_m, offset_c, offset_rho, offset_p = regress['aopt'], regress['phi0'], regress['rho'], regress['p']
     regress = rcc(slope_adiff, slope_norm)
     slope_m, slope_c, slope_rho, slope_p = regress['aopt'], regress['phi0'], regress['rho'], regress['p']
     slope_c = slope_c - 2 * np.pi
-
-    stat_record(stat_fn, False, 'LC_Regression SIM Onset-adiff r(%d)=%0.3f, p%s'%(offset_bins.sum(), offset_rho, p2str(offset_p)))
-    stat_record(stat_fn, False, 'LC_Regression SIM Slope-adiff r(%d)=%0.3f, p%s'%(slope_bins.sum(), slope_rho, p2str(slope_p)))
-
-    # Density
-    offset_xx, offset_yy, offset_zz = linear_circular_gauss_density(offset_adiff, offset_norm,
-                                                                    cir_kappa=4 * np.pi, lin_std=0.2, xbins=50,
-                                                                    ybins=50, xbound=(0, np.pi),
-                                                                    ybound=offset_bound)
-    slope_xx, slope_yy, slope_zz = linear_circular_gauss_density(slope_adiff, slope_norm,
-                                                                 cir_kappa=4 * np.pi, lin_std=0.2, xbins=50,
-                                                                 ybins=50, xbound=(0, np.pi),
-                                                                 ybound=slope_bound)
+    stat_record(stat_fn, False, 'LC_Regression Onset-adiff $r_{(%d)}=%0.3f, p=%s$' % (
+        offset_bins.sum(), offset_rho, p2str(offset_p)))
+    stat_record(stat_fn, False,
+                'LC_Regression Slope-adiff $r_{(%d)}=%0.3f, p=%s$' % (slope_bins.sum(), slope_rho, p2str(slope_p)))
 
 
-    # # # Marginals
-    #
-    #
-    # # Marginal onset
-    # offset_slicerange = (0, 2*np.pi)
-    # offset_slicegap = 0.02  # 0.007
-    # plot_marginal_slices(ax[0], offset_xx, offset_yy, offset_zz,
-    #                      selected_adiff,
-    #                      offset_slicerange, offset_slicegap)
-    #
-    # ax[0].set_xticks([1, 3, 5])
-    # ax[0].set_xlim(1, 5)
-    # ax[0].set_xlabel('Phase onset (rad)', fontsize=fontsize)
-    # ax[0].tick_params(labelsize=ticksize)
-    #
-    # # Marginal slope
-    # slope_slicerange = (-2 * np.pi, 0)
-    # slope_slicegap = 0.02  # 0.007
-    # plot_marginal_slices(ax[1], slope_xx, slope_yy, slope_zz,
-    #                      selected_adiff, slope_slicerange, slope_slicegap)
-    # ax[1].set_xticks([-2 * np.pi, -np.pi, 0])
-    # ax[1].set_xticklabels(['$-2\pi$', '$-\pi$', '0'])
-    # ax[1].set_xlim(-2*np.pi, 0)
-    # ax[1].set_xlabel('Slope (rad)', fontsize=fontsize)
-    # ax[1].tick_params(labelsize=ticksize)
-    # # Colorbar
-    # sm = plt.cm.ScalarMappable(cmap=cm.brg,
-    #                            norm=plt.Normalize(vmin=selected_adiff.min(), vmax=selected_adiff.max()))
-    #
-    # # plt.gca().set_visible(False)
-    # cb = fig.colorbar(sm, cax=ax[4])
-    # cb.set_ticks([0, np.pi / 2, np.pi])
-    # cb.set_ticklabels(['0', '', '$\pi$'])
-    # cb.set_label(r'$|d(\theta_{pass}, \theta_{precess})|$', fontsize=fontsize, labelpad=-5)
 
-    # # Average precession curves
+    # # Plot average precession curves
     low_mask = absadiff_pass < (np.pi / 6)
     high_mask = absadiff_pass > (np.pi - np.pi / 6)
-    print('SIM high %d, low %d'%(high_mask.sum(), low_mask.sum()))
-    sample_size_high = min(high_mask.sum(), 500)
-    sample_size_low = min(low_mask.sum(), 500)
-    np.random.seed(1)
-    high_ranvec = np.random.choice(high_mask.sum(), size=sample_size_high, replace=False)
-    low_ranvec = np.random.choice(low_mask.sum(), size=sample_size_low, replace=False)
-    slopes_high, offsets_high = slope[high_mask][high_ranvec], offset[high_mask][high_ranvec]
-    slopes_low, offsets_low = slope[low_mask][low_ranvec], offset[low_mask][low_ranvec]
+    slopes_high_all, offsets_high_all = slope[high_mask], offset[high_mask]
+    slopes_low_all, offsets_low_all = slope[low_mask], offset[low_mask]
 
-    regress_high, regress_low, pval_slope, pval_offset = permutation_test_average_slopeoffset(
-        slopes_high, offsets_high, slopes_low, offsets_low, NShuffles=NShuffles)
+    pval_slope, _, slope_descrips, slopetxt = my_kruskal_2samp(slopes_low_all, slopes_high_all, 'low-$|d|$', 'high-$|d|$')
+    (mdn_slopel, lqr_slopel, hqr_slopel), (mdn_slopeh, lqr_slopeh, hqr_slopeh) = slope_descrips
 
-    stat_record(stat_fn, False,
-                'SIM d=high, rho=%0.2f, p%s, slope=%0.2f, offset=%0.2f' % \
-                (regress_high['rho'], p2str(regress_high['p']), regress_high['aopt'] * 2 * np.pi,
-                 regress_high['phi0']))
-    stat_record(stat_fn, False,
-                'SIM d=low, rho=%0.2f, p%s, slope=%0.2f, offset=%0.2f' % \
-                (regress_low['rho'], p2str(regress_low['p']), regress_low['aopt'] * 2 * np.pi,
-                 regress_low['phi0']))
-    stat_record(stat_fn, False,
-                'SIM high-low-difference, Slope: p%s; Offset: p%s' % \
-                (p2str(pval_slope), p2str(pval_offset)))
-
+    pval_offset, _, offset_descrips, offsettxt = my_ww_2samp(offsets_low_all, offsets_high_all, 'low-$|d|$', 'high-$|d|$')
+    (cmean_offsetl, sem_offsetl), (cmean_offseth, sem_offseth) = offset_descrips
 
     xdum = np.linspace(0, 1, 10)
-    high_agg_ydum = 2 * np.pi * regress_high['aopt'] * xdum + regress_high['phi0']
-    low_agg_ydum = 2 * np.pi * regress_low['aopt'] * xdum + regress_low['phi0']
+    high_agg_ydum = mdn_slopeh * xdum + cmean_offseth
+    low_agg_ydum = mdn_slopel * xdum + cmean_offsetl
+    slopel_valstr = r'low-$|d|=%0.2f$'%(mdn_slopel)
+    slopeh_valstr = r'high-$|d|=%0.2f$'%(mdn_slopeh)
+    offsetl_valstr = r'low-$|d|=%0.2f$'%(cmean_offsetl)
+    offseth_valstr = r'high-$|d|=%0.2f$'%(cmean_offseth)
+    stat_record(stat_fn, False, '===== Average precession curves ====' )
+    stat_record(stat_fn, False, 'Slope, %s, %s, %s'%(slopel_valstr, slopeh_valstr, slopetxt))
+    stat_record(stat_fn, False, 'Onset, %s, %s, %s'%(offsetl_valstr, offseth_valstr, offsettxt))
 
     ax[0].plot(xdum, high_agg_ydum, c='lime', label='$|d|>5\pi/6$')
     ax[0].plot(xdum, low_agg_ydum, c='darkblue', label='$|d|<\pi/6$')
 
-    pvalstr1 = '$p_s$'+'%s'%p2str(pval_slope)
-    pvalstr2 = '$p_o$'+'%s'%p2str(pval_offset)
-    ax[0].text(0.3, np.pi/4+0.2, '%s'%(pvalstr1), fontsize=legendsize)
-    ax[0].text(0.3, np.pi/4+0.9, '%s'%(pvalstr2), fontsize=legendsize)
+    ax[0].annotate('$p_s$'+'=%s'% (p2str(pval_slope)), xy=(0.015, 0.2 + 0.03), xycoords='axes fraction', fontsize=legendsize)
+    ax[0].annotate('$p_o$'+'=%s'% (p2str(pval_offset)), xy=(0.015, 0.035 + 0.03), xycoords='axes fraction', fontsize=legendsize)
     ax[0].spines["top"].set_visible(False)
     ax[0].spines["right"].set_visible(False)
     ax[0].set_xticks([0, 1])
     ax[0].set_xlim(0, 1)
-    ax[0].set_ylim(-np.pi/2, np.pi + 0.3)
-    ax[0].set_yticks([0, np.pi])
-    ax[0].set_yticklabels(['0', '$\pi$'])
+    ax[0].set_ylim(-np.pi-1, np.pi + 0.3)
+    ax[0].set_yticks([-np.pi, 0, np.pi])
+    ax[0].set_yticklabels(['$-\pi$', '0', '$\pi$'])
     ax[0].tick_params(labelsize=ticksize)
     ax[0].set_xlabel('Position')
     customlegend(ax[0], fontsize=legendsize, loc='lower left', handlelength=0.5, bbox_to_anchor=(0.1, 0.7))
@@ -455,7 +395,7 @@ def plot_both_slope_offset_Romani(simdf, fig, ax, NShuffles=10):
     phasesph = phase_spike[high_mask_sp]
     phasespl = phase_spike[low_mask_sp]
     fstat, k_pval = circ_ktest(phasesph, phasespl)
-    p_ww, ww_table = watson_williams(phasesph, phasespl)
+    p_ww, _, _, p_wwtxt = my_ww_2samp(phasesph, phasespl, r'$high-|d|$', r'$low-|d|$')
     mean_phasesph = circmean(phasesph)
     mean_phasespl = circmean(phasespl)
     nh, _, _ = ax[1].hist(phasesph, bins=36, density=True, histtype='step', color='lime')
@@ -463,7 +403,7 @@ def plot_both_slope_offset_Romani(simdf, fig, ax, NShuffles=10):
     ml = max(nh.max(), nl.max())
     ax[1].scatter(mean_phasesph, ml*1.1, marker='|', color='lime', linewidth=0.75)
     ax[1].scatter(mean_phasespl, ml*1.1, marker='|', color='darkblue', linewidth=0.75)
-    ax[1].annotate('p%s'%(p2str(p_ww)), xy=(0.3, 0.1), xycoords='axes fraction', fontsize=legendsize)
+    ax[1].annotate(r'$p$=%s'%(p2str(p_ww)), xy=(0.3, 0.1), xycoords='axes fraction', fontsize=legendsize)
     ax[1].set_xlim(-np.pi, np.pi)
     ax[1].set_xticks([-np.pi, 0, np.pi])
     ax[1].set_xticklabels(['$-\pi$', '0', '$\pi$'])
@@ -475,10 +415,9 @@ def plot_both_slope_offset_Romani(simdf, fig, ax, NShuffles=10):
     ax[1].set_xlabel('Phase (rad)', fontsize=fontsize)
     ax[1].set_ylabel('Relative\nfrequency', fontsize=fontsize)
 
-    stat_record(stat_fn, False, 'SpikePhase-HighLowDiff Mean_diff p%s' % ( p2str(p_ww)))
-    stat_record(stat_fn, False, ww_table.to_string())
+    stat_record(stat_fn, False, 'SIM, difference of mean spike phases, %s' % (p_wwtxt))
     stat_record(stat_fn, False,
-                'SpikePhase-HighLowDiff SIM Bartlett\'s test F_{(%d, %d)}=%0.2f, p%s' % \
+                r'SIM, difference of concentration Bartlett\'s test $F_{(%d, %d)}=%0.2f, p=%s$' % \
                 (phasesph.shape[0], phasespl.shape[0], fstat, p2str(k_pval)))
 
 
@@ -529,7 +468,7 @@ def singlefield_analysis_Romani(single_simdf, save_dir):
 
     omniplot_singlefields_Romani(simdf=single_simdf, ax=ax_direct)
     plot_field_bestprecession_Romani(simdf=single_simdf, ax=ax_bestprecess)
-    plot_both_slope_offset_Romani(simdf=single_simdf, fig=fig, ax=ax_mar, NShuffles=1000)
+    plot_both_slope_offset_Romani(simdf=single_simdf, ax=ax_mar)
     fig.savefig(join(save_dir, 'SIM_single.png'), dpi=dpi)
     fig.savefig(join(save_dir, 'SIM_single.eps'), dpi=dpi)
 
@@ -574,31 +513,27 @@ def omniplot_pairfields_Romani(simdf, ax):
     # Binomial test for all fields
     signum_all, n_all = all_dict['shift_signum'][0], all_dict['n'][0]
     p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
-    stat_txt = 'Binomial test, greater than p=0.05, %d/%d, p%s'%(signum_all, n_all, p2str(p_binom))
+    stat_txt = 'Binomial test, greater than p=0.05, %d/%d=%0.4f, p=%s'%(signum_all, n_all, signum_all/n_all, p2str(p_binom))
     stat_record(stat_fn, False, stat_txt)
     # ax[1].annotate('Sig. Frac. (All)\n%d/%d=%0.3f\np%s'%(signum_all, n_all, signum_all/n_all, p2str(p_binom)), xy=(0.1, 0.5), xycoords='axes fraction', fontsize=legendsize)
 
-    # Statistical testing
+    # # Statistical test
     for idx, ntresh in enumerate(spike_threshs):
-        rs_bord_stat, rs_bord_pR = ranksums(border_dict['allR'][idx], nonborder_dict['allR'][idx])
+        stat_record(stat_fn, False, '======= Threshold=%d ======'%(ntresh))
+        # KW test for border median R
+        rs_bord_pR, (border_n, nonborder_n), mdns, rs_txt = my_kruskal_2samp(border_dict['allR'][idx], nonborder_dict['allR'][idx], 'border', 'nonborder')
+        stat_record(stat_fn, False, "SIM, Median R, border vs non-border: %s" % (rs_txt))
 
+        # Chisquared test for border fractions
         contin = pd.DataFrame({'border': [border_dict['shift_signum'][idx],
                                           border_dict['shift_nonsignum'][idx]],
                                'nonborder': [nonborder_dict['shift_signum'][idx],
-                                             nonborder_dict['shift_nonsignum'][idx]]})
-        try:
-            chi_stat, chi_pborder, chi_dof, _ = chi2_contingency(contin)
-        except ValueError:
-            chi_stat, chi_pborder, chi_dof = 0, 1, 1
+                                             nonborder_dict['shift_nonsignum'][idx]]}).to_numpy()
 
-        border_n, nonborder_n = border_dict['n'][idx], nonborder_dict['n'][idx]
-        stat_record(stat_fn, False, 'Sim BorderEffect Frac, Thresh=%0.2f, \chi^2_{(dof=%d, n=%d)}=%0.2f, p=%0.4f' % \
-                    (ntresh, chi_dof, border_n + nonborder_n, chi_stat, chi_pborder))
+        chi_pborder, _, txt_chiborder = my_chi_2way(contin)
+        _, _, fishtxt = my_fisher_2way(contin)
+        stat_record(stat_fn, False, "SIM, Significant fraction, border vs non-border: %s, %s" % (txt_chiborder, fishtxt))
 
-        mdnR_border, mdnR2_nonrboder = border_dict['medianR'][idx], nonborder_dict['medianR'][idx]
-        stat_record(stat_fn, False,
-                    'Sim BorderEffect MedianR:%0.2f-%0.2f, Thresh=%0.2f, z=%0.2f, n_1=%d, n_2=%d, p=%0.4f' % \
-                    (mdnR_border, mdnR2_nonrboder, ntresh, rs_bord_stat, border_n, nonborder_n, rs_bord_pR))
 
 
 
@@ -606,22 +541,21 @@ def omniplot_pairfields_Romani(simdf, ax):
     # Plotting asthestic
     ax_ylabels = ['Median R', "Sig. Frac.", "Data Frac."]
     for axid in range(3):
-        ax[axid].set_xticks([0, 100, 200, 300, 400])
-        ax[axid].set_xticklabels(['0', '', '200', '', '400'])
+        ax[axid].set_xticks([0, 200, 400])
+        ax[axid].set_xticks(np.arange(0, 401, 100), minor=True)
         ax[axid].set_ylabel(ax_ylabels[axid], fontsize=fontsize)
         ax[axid].tick_params(axis='both', which='major', labelsize=ticksize)
         ax[axid].spines['top'].set_visible(False)
         ax[axid].spines['right'].set_visible(False)
 
-    ax[1].set_xlabel('Spike count threshold', fontsize=fontsize)
+    ax[1].set_xlabel('Spike-pair count threshold', fontsize=fontsize)
 
     customlegend(ax[0], fontsize=legendsize, loc='lower left', bbox_to_anchor=(0.2, 0.5))
 
     ax[0].set_yticks([0, 0.2, 0.4, 0.6])
     ax[0].set_yticks(np.arange(0, 0.7, 0.1), minor=True)
-    ax[1].set_yticks([0, 0.5, 1])
-    ax[1].set_yticklabels(['0', '', '1'])
-    ax[1].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+    ax[1].set_yticks([0, 0.1, 0.2])
+    ax[1].set_yticks(np.arange(0, 0.25, 0.05), minor=True)
     ax[2].set_yticks([0, 0.5, 1])
     ax[2].set_yticklabels(['0', '', '1'])
     ax[2].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
@@ -641,16 +575,16 @@ def plot_pair_correlation_Romani(simdf, ax):
                                             markersize=markersize, linew=linew)
 
     nsamples = np.sum((~np.isnan(x)) & (~np.isnan(y)))
-    stat_record(stat_fn, False, 'SIM A->B, y = %0.2fx + %0.2f, rho=%0.2f, n=%d, p=%0.4f' % \
-                (regress['aopt'] * 2 * np.pi, regress['phi0'], regress['rho'], nsamples, regress['p']))
+    stat_record(stat_fn, False, 'SIM A->B, y = %0.2fx + %0.2f, $r_{(%d)}=%0.2f, p=%s$' % \
+                (regress['aopt'] * 2 * np.pi, regress['phi0'], nsamples, regress['rho'], p2str(regress['p'])))
 
     # B->A
     ax[1], x, y, regress = plot_correlogram(ax=ax[1], df=simdf, tag='', direct='B->A', color='gray', alpha=1,
                                             markersize=markersize, linew=linew)
 
     nsamples = np.sum((~np.isnan(x)) & (~np.isnan(y)))
-    stat_record(stat_fn, False, 'SIM B->A, y = %0.2fx + %0.2f, rho=%0.2f, n=%d, p=%0.4f' % \
-                (regress['aopt'] * 2 * np.pi, regress['phi0'], regress['rho'], nsamples, regress['p']))
+    stat_record(stat_fn, False, 'SIM B->A, y = %0.2fx + %0.2f, $r_{(%d)}=%0.2f, p=%s$' % \
+                (regress['aopt'] * 2 * np.pi, regress['phi0'], nsamples, regress['rho'], p2str(regress['p'])))
 
 
     ax[0].set_ylabel('Phase shift (rad)', fontsize=fontsize)
@@ -661,8 +595,8 @@ def plot_pair_correlation_Romani(simdf, ax):
         ax_each.spines['top'].set_visible(False)
         ax_each.spines['right'].set_visible(False)
 
-    ax[0].set_title('A>B', fontsize=fontsize)
-    ax[1].set_title('B>A', fontsize=fontsize)
+    ax[0].set_title(r'$A\rightarrow B$', fontsize=fontsize)
+    ax[1].set_title(r'$B\rightarrow A$', fontsize=fontsize)
 
 
 def plot_exintrinsic_Romani(simdf, ax):
@@ -684,19 +618,19 @@ def plot_exintrinsic_Romani(simdf, ax):
     n_total = n_ex + n_in
 
 
-    chistat, pchi = chisquare([n_ex, n_in])
-    stat_record(stat_fn, False, 'SIM, %d/%d, \chi^2_{(dof=%d, n=%d)}=%0.2f, p=%0.4f' % \
-                (n_ex, n_total, 1, n_total, chistat, pchi))
+    pchi, _, pchitxt = my_chi_1way([n_ex, n_in])
+    stat_record(stat_fn, False, r'SIM, %d/%d=%0.2f, %s' % \
+                (n_ex, n_in, n_ex/n_in, pchitxt))
     # 1-sample t test
     mean_ratio = np.mean(corr_overlap_ratio)
-    ttest_stat, p_1d1samp = ttest_1samp(corr_overlap_ratio, 0)
-    stat_record(stat_fn, False, 'SIM, mean=%0.4f, t(%d)=%0.2f, p=%0.4f' % \
-                (mean_ratio, n_total-1, ttest_stat, p_1d1samp))
+    p_1d1samp, _, p_1d1samptxt = my_ttest_1samp(corr_overlap_ratio, 0)
+    stat_record(stat_fn, False, 'SIM, mean=%0.4f, %s' % \
+                (mean_ratio, p_1d1samptxt))
     # Plot scatter 2d
     ax[0].scatter(corr_overlap_flip, corr_overlap, marker='.', s=ms, c='gray')
     ax[0].plot([0.3, 1], [0.3, 1], c='k', linewidth=0.75)
-    ax[0].annotate('%0.2f'%(n_ex/n_total), xy=(0.05, 0.17), xycoords='axes fraction', size=legendsize, color='r')
-    ax[0].annotate('p%s'%(p2str(pchi)), xy=(0.05, 0.025), xycoords='axes fraction', size=legendsize)
+    ax[0].annotate('%0.2f'%(n_ex/n_in), xy=(0.05, 0.17), xycoords='axes fraction', size=legendsize, color='r')
+    ax[0].annotate('p=%s'%(p2str(pchi)), xy=(0.05, 0.025), xycoords='axes fraction', size=legendsize)
     ax[0].set_xlabel('Extrinsicity', fontsize=fontsize)
     ax[0].set_xticks([0, 1])
     ax[0].set_yticks([0, 1])
@@ -713,7 +647,7 @@ def plot_exintrinsic_Romani(simdf, ax):
     (bins, _, _) = ax[1].hist(corr_overlap_ratio, bins=edges, color='gray',
                               density=True, histtype='stepfilled')
     ax[1].plot([mean_ratio, mean_ratio], [0, bins.max()], c='k')
-    ax[1].annotate('$\mu$'+ '=%0.3f\np%s'%(mean_ratio, p2str(p_1d1samp)), xy=(0.2, 0.8), xycoords='axes fraction', fontsize=legendsize)
+    ax[1].annotate('$\mu$'+ '=%0.3f\np=%s'%(mean_ratio, p2str(p_1d1samp)), xy=(0.2, 0.8), xycoords='axes fraction', fontsize=legendsize)
     ax[1].set_xticks([-0.5, 0, 0.5])
     ax[1].set_yticks([0, 0.1/width] )
     ax[1].set_yticklabels(['0', '0.1'])
@@ -734,11 +668,12 @@ def pairfield_analysis_Romani(pair_simdf, save_dir):
     # Directionality
     # 0, 1, 2, 3
     xsqueeze, ysqueeze = 0.1, 0.23
-    xshift, yshift = 0.032, 0.05
-    ax_direct = [fig.add_axes([0+xsqueeze/2+xshift, 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
-                 fig.add_axes([ax_basew+xsqueeze/2+xshift, 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
-                 fig.add_axes([ax_basew*2+xsqueeze/2+xshift, 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
-                 fig.add_axes([ax_basew*3+xsqueeze/2+xshift, 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze])]
+    base_xshift, yshift = 0.15, 0.05
+    xshift = [base_xshift, base_xshift + 0.02, base_xshift + 0.02*2, base_xshift + 0.02*3]
+    ax_direct = [fig.add_axes([0+xsqueeze/2+xshift[0], 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
+                 fig.add_axes([ax_basew+xsqueeze/2+xshift[1], 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
+                 fig.add_axes([ax_basew*2+xsqueeze/2+xshift[2], 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze]),
+                 fig.add_axes([ax_basew*3+xsqueeze/2+xshift[3], 1-ax_baseh+ysqueeze/2+yshift, ax_basew-xsqueeze, ax_baseh-ysqueeze])]
 
     # Pair Correlation
     # 0, 1
@@ -768,12 +703,14 @@ def pairfield_analysis_Romani(pair_simdf, save_dir):
 
 def main():
     save_dir = 'result_plots/sim'
-    single_simdf = load_pickle('results/sim/singlefield_df_square_sub04_AllChunk.pickle')
-    singlefield_analysis_Romani(single_simdf, save_dir=save_dir)
+    os.makedirs(save_dir, exist_ok=True)
 
-    # pair_simdf = load_pickle('results/sim/pairfield_df_square_sub025_AllChunk.pickle')
-    # pair_simdf['border'] = (pair_simdf['border1'] & pair_simdf['border2'])
-    # pairfield_analysis_Romani(pair_simdf, save_dir=save_dir)
+    # single_simdf = load_pickle('results/sim/singlefield_df.pickle')
+    # singlefield_analysis_Romani(single_simdf, save_dir=save_dir)
+
+    pair_simdf = load_pickle('results/sim/pairfield_df.pickle')
+    pair_simdf['border'] = (pair_simdf['border1'] & pair_simdf['border2'])
+    pairfield_analysis_Romani(pair_simdf, save_dir=save_dir)
 
 if __name__ == '__main__':
     main()

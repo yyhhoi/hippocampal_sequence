@@ -34,7 +34,6 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
                       numpass_at_precess=[], numpass_at_precess_low=[])
 
     num_trials = df.shape[0]
-
     aedges = np.linspace(-np.pi, np.pi, 36)
     abind = aedges[1] - aedges[0]
     sp_binwidth = 5
@@ -42,7 +41,7 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
     aedges_precess = np.linspace(-np.pi, np.pi, 6)
     kappa_precess = 1
     precess_filter = PrecessionFilter()
-    nspikes_stats = {'CA1': 6, 'CA2': 6, 'CA3': 7}  # 25% quantile for 0.4t
+    nspikes_stats = {'CA1': 6, 'CA2': 6, 'CA3': 7}  # 25% quantile of precessing passes
     for ntrial in range(num_trials):
 
         wave = df.loc[ntrial, 'wave']
@@ -78,8 +77,8 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
                 # Construct passes (segment & chunk)
                 tok, idin = tunner.get_idin(mask, xaxis, yaxis)
                 passdf = tunner.construct_singlefield_passdf(tok, tsp, interpolater_x, interpolater_y, interpolater_angle)
-
                 allchunk_df = passdf[(~passdf['rejected']) & (passdf['chunked']<2)].reset_index(drop=True)
+                # allchunk_df = passdf[(~passdf['rejected'])].reset_index(drop=True)
 
                 # Get info from passdf and interpolate
                 if allchunk_df.shape[0] < 1:
@@ -109,9 +108,12 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
 
 
                 # Time shift shuffling for rate directionality
-                rate_R_pval = timeshift_shuffle_exp_wrapper(all_tsp_list, all_t_list, rate_R,
-                                                             NShuffles, mlmer, interpolater_x,
-                                                             interpolater_y, interpolater_angle, trange)
+                if np.isnan(rate_R):
+                    rate_R_pval = np.nan
+                else:
+                    rate_R_pval = timeshift_shuffle_exp_wrapper(all_tsp_list, all_t_list, rate_R,
+                                                                 NShuffles, mlmer, interpolater_x,
+                                                                 interpolater_y, interpolater_angle, trange)
 
 
 
@@ -120,7 +122,7 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
                                        spikeangle='spikeangle')
                 accept_mask = (~passdf['rejected']) & (passdf['chunked'] < 2)
                 passdf['excluded_for_precess'] = ~accept_mask
-                precessdf, precess_angle, precess_R, _ = get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, minocc,
+                precessdf, precess_angle, precess_R, _ = get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict,
                                                                               field_d=field_d, kappa=kappa_precess, bins=None)
                 fitted_precessdf = precessdf[precessdf['fitted']].reset_index(drop=True)
                 # Proceed only if precession exists
@@ -250,8 +252,6 @@ def single_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pt
     return fielddf_raw
 
 
-
-
 def single_field_preprocess_networks(simdata, radius=10, vthresh=2, sthresh=80, NShuffles=200,
                                      subsample_fraction=1, save_pth=None):
     """
@@ -351,7 +351,7 @@ def single_field_preprocess_networks(simdata, radius=10, vthresh=2, sthresh=80, 
         neuro_keys_dict = dict(tsp='tsp', spikev='spikev', spikex='spikex', spikey='spikey',
                                spikeangle='spikeangle')
         precessdf, precess_angle, precess_R, _ = get_single_precessdf(passdf, precesser, precess_filter,
-                                                                      neuro_keys_dict, occ_bins.min())
+                                                                      neuro_keys_dict)
 
         filtered_precessdf = precessdf[precessdf['precess_exist']].reset_index(drop=True)
 
@@ -396,34 +396,14 @@ def single_field_preprocess_networks(simdata, radius=10, vthresh=2, sthresh=80, 
 
 
 def plot_placefield_examples(rawdf, save_dir=None):
+
+    example_dir = join(save_dir, 'example_fields2')
+    os.makedirs(example_dir)
+
     field_figl = total_figw / 8
     field_linew = 0.75
     field_ms = 1
-
-    precess_figl = total_figw / 3.5
     warnings.filterwarnings("ignore")
-
-    def plot_precession(ax, d, phase, rcc_m, rcc_c, rcc_p, fontsize, marker_size):
-        ax.scatter(np.concatenate([d, d]), np.concatenate([phase, phase + 2 * np.pi]), marker='.',
-                   s=marker_size, c='0.7')
-        xdum = np.linspace(0, 1, 10)
-        ydum = xdum * (rcc_m * 2 * np.pi) + rcc_c
-
-        linestyle = '-'
-
-        ax.plot(xdum, ydum, c='k', linestyle=linestyle)
-        ax.plot(xdum, ydum + 2 * np.pi, c='k', linestyle=linestyle)
-        ax.plot(xdum, ydum - 2 * np.pi, c='k', linestyle=linestyle)
-        ax.set_xlabel('Position', fontsize=fontsize)
-        ax.set_ylabel('Phase (rad)', fontsize=fontsize)
-        ax.set_xticks([0, 1])
-        ax.set_yticks([-np.pi, 0, np.pi, 2 * np.pi, 3 * np.pi])
-        ax.set_yticklabels(['$-\pi$', '', '$\pi$', '', '$3\pi$'])
-        ax.tick_params(axis='both', which='major', labelsize=ticksize)
-
-        ax.set_xlim(0, 1)
-        ax.set_ylim(-np.pi, 3 * np.pi)
-        return ax
 
     # Parameters
     vthresh = 5
@@ -449,7 +429,7 @@ def plot_placefield_examples(rawdf, save_dir=None):
     for ntrial in range(num_trials):
 
         wave = rawdf.loc[ntrial, 'wave']
-        precesser = PrecessionProcesser(sthresh=sthresh, vthresh=vthresh, wave=wave)
+        precesser = PrecessionProcesser(wave=wave)
         for ca in ['CA%d' % i for i in range(1, 4)]:
 
             # Get data
@@ -459,7 +439,7 @@ def plot_placefield_examples(rawdf, save_dir=None):
                 continue
             trajx, trajy = indata['x'].to_numpy(), indata['y'].to_numpy()
             num_fields = field_df.shape[0]
-            tunner = IndataProcessor(indata, vthresh, True)
+            tunner = IndataProcessor(indata, vthresh=5, sthresh=3, minpasstime=0.4, smooth=None)
             interpolater_angle = interp1d(tunner.t, tunner.angle)
             interpolater_x = interp1d(tunner.t, tunner.x)
             interpolater_y = interp1d(tunner.t, tunner.y)
@@ -507,46 +487,6 @@ def plot_placefield_examples(rawdf, save_dir=None):
                 fieldangle, fieldR, norm_prob = mlmer.get_directionality(possp, hdsp)
                 norm_prob[np.isnan(norm_prob)] = 0
 
-                # # Precession per pass
-                # neuro_keys_dict = dict(tsp='tsp', spikev='spikev', spikex='spikex', spikey='spikey',
-                #                        spikeangle='spikeangle')
-                # pass_dict = precesser.gen_precess_dict()
-                # for precess_dict in precesser.get_single_precession(passdf, neuro_keys_dict):
-                #     pass_dict = precesser.append_pass_dict(pass_dict, precess_dict)
-                # precess_df = pd.DataFrame(pass_dict)
-                # precessdf = precess_filter.filter_single(precess_df, minocc=occ_bins.min())
-                # filtered_precessdf = precessdf[precessdf['precess_exist']].reset_index(drop=True)
-                #
-                # # # (Plot) Precessions in place field
-                # # Plot all precession
-                # num_precess = filtered_precessdf.shape[0]
-                # if num_precess > 1:
-                #     fig_precessfield, ax_precessfield = plt.subplots(figsize=(precess_figl, precess_figl * 0.75))
-                #     all_dsp = np.concatenate(filtered_precessdf['dsp'].to_list())
-                #     all_phasesp = np.concatenate(filtered_precessdf['phasesp'].to_list())
-                #     regress = rcc(all_dsp, all_phasesp)
-                #     rcc_m, rcc_c, rcc_rho, rcc_p = regress['aopt'], regress['phi0'], regress['rho'], regress['p']
-                #
-                #     ax_precessfield = plot_precession(ax_precessfield, all_dsp, all_phasesp,
-                #                                       rcc_m, rcc_c, rcc_p, fontsize, marker_size=2)
-                #     fig_precessfield.tight_layout()
-                #     fig_precessfield.savefig(os.path.join(save_dir, 'example_precessions',
-                #                                           '%s-field%d.%s' % (ca, fieldid[ca], figext)), dpi=dpi)
-                #     plt.close()
-                #
-                # # # Plot for precession of each pass
-                # for i in range(num_precess):
-                #     fig_precesspass, ax_precesspass = plt.subplots(figsize=(precess_figl, precess_figl * 0.8))
-                #     dsp, phasesp, rcc_m, rcc_c, rcc_p = filtered_precessdf.loc[i, ['dsp', 'phasesp', 'rcc_m',
-                #                                                                    'rcc_c', 'rcc_p']]
-                #     ax_precesspass = plot_precession(ax_precesspass, dsp, phasesp,
-                #                                      rcc_m, rcc_c, rcc_p, fontsize, marker_size=8)
-                #
-                #     fig_precesspass.tight_layout()
-                #     fig_precesspass.savefig(os.path.join(save_dir, 'example_precessions', '%s-field%d-pass%d.%s' %
-                #                                          (ca, fieldid[ca], i, figext)), dpi=dpi)
-                #     plt.close()
-
                 # # (Plot) Place field Example
                 fig2 = plt.figure(figsize=(field_figl * 2, field_figl))
                 peak_rate = pf['map'].max()
@@ -577,8 +517,8 @@ def plot_placefield_examples(rawdf, save_dir=None):
                 # ax_polar.text(0.5, basey + 0.25, '%0.2f' % (fieldR), fontsize=legendsize, transform=ax_polar.transAxes)
 
                 fig2.tight_layout()
-                fig2.savefig(os.path.join(save_dir, 'example_fields', '%s-field%d.%s' % (ca, fieldid[ca], figext)),
-                             dpi=dpi)
+                fig2.savefig(os.path.join(example_dir, '%s-field%d.png' % (ca, fieldid[ca])), dpi=dpi)
+                fig2.savefig(os.path.join(example_dir, '%s-field%d.eps' % (ca, fieldid[ca])), dpi=dpi)
                 plt.close()
 
                 fieldid[ca] += 1
@@ -586,17 +526,15 @@ def plot_placefield_examples(rawdf, save_dir=None):
 
 if __name__ == '__main__':
     rawdf_pth = 'data/emankindata_processed_withwave.pickle'
-    # rawdf_pth = 'data/emankindata_processed.pickle'
-    plot_dir = 'result_plots/single_field/'
+    save_pth = 'results/emankin/singlefield_df_NoShuffle.pickle'
 
-    # Experiment
-    df = load_pickle(rawdf_pth)
-    single_field_preprocess_exp(df, save_pth='results/exp/single_field/singlefield_df_DirectAllChunk_NoShuffle.pickle')
-    # single_field_preprocess_exp(df, save_pth=None)
+    # df = load_pickle(rawdf_pth)
+    # single_field_preprocess_exp(df, vthresh=5, sthresh=3, save_pth=save_pth)
 
     # # # Plotting
-    # rawdf = load_pickle(rawdf_pth)
-    # plot_placefield_examples(rawdf, plot_dir)
+    plot_dir = 'result_plots/single_field/'
+    df = load_pickle(rawdf_pth)
+    plot_placefield_examples(df, plot_dir)
 
     # # Simulation
     # simdata = load_pickle('results/sim/raw/squarematch.pickle')

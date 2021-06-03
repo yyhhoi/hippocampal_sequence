@@ -2,28 +2,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
-import random
-from glob import glob
 from os.path import join
 from matplotlib import cm
 
 from pycircstat.tests import watson_williams, rayleigh
 from pycircstat.descriptive import cdiff
 from pycircstat.descriptive import mean as circmean
-from scipy.stats import vonmises, pearsonr, chi2_contingency, chi2, ttest_ind, spearmanr, chisquare, \
-    ttest_1samp, linregress, ks_2samp, binom_test
-from scipy.interpolate import interp1d
+from scipy.stats import chi2_contingency, ttest_ind, chisquare, ttest_1samp, linregress, binom_test
 
 from common.linear_circular_r import rcc
-from common.utils import load_pickle, sigtext, stat_record, p2str, wwtable2text
-from common.comput_utils import dist_overlap, normsig, append_extrinsicity, linear_circular_gauss_density, \
-    find_pair_times, \
-    IndataProcessor, check_border, window_shuffle_gen, \
-    compute_straightness, calc_kld, window_shuffle_wrapper, timeshift_shuffle_exp_wrapper, segment_passes, pair_diff, \
-    check_border_sim, midedges, linear_gauss_density, circ_ktest, angular_dispersion_test, circular_density_1d, \
-    fisherexact, ranksums, shiftcyc_full2half, ci_vonmise
+from common.stattests import p2str, stat_record, wwtable2text, category2waytest, ranksums2text, my_chi_2way, \
+    fdr_bh_correction, my_kruskal_3samp, my_kruskal_2samp, my_chi_1way, my_ttest_1samp, my_fisher_2way, my_ww_2samp
+from common.comput_utils import midedges, circ_ktest, angular_dispersion_test, circular_density_1d, \
+    fisherexact, ranksums, shiftcyc_full2half
 from common.script_wrappers import DirectionalityStatsByThresh, PrecessionFilter
-from common.visualization import plot_correlogram, plot_dcf_phi_histograms, plot_marginal_slices, customlegend
+from common.visualization import plot_correlogram, customlegend
 from common.shared_vars import fontsize, ticksize, legendsize, titlesize, ca_c, dpi, total_figw
 
 
@@ -140,13 +133,15 @@ def omniplot_pairfields(expdf, save_dir=None):
     # Initialization of parameters
     spike_threshs = np.arange(0, maxspcounts, spcount_step)
     stats_getter = DirectionalityStatsByThresh('num_spikes_pair', 'rate_R_pvalp', 'rate_Rp')
-    chipval_dict = dict(CA1_be=[], CA2_be=[], CA3_be=[], all_CA13=[], all_CA23=[], all_CA12=[])
-    rspval_dict = dict(CA1_be=[], CA2_be=[], CA3_be=[], all_CA13=[], all_CA23=[], all_CA12=[])
     expdf['border'] = expdf['border1'] | expdf['border2']
 
     # # Plot
     data_dict = {'CA%d'%(i):dict() for i in range(1, 4)}
     for caid, (ca, cadf) in enumerate(expdf.groupby('ca')):
+
+        # Record spike counts
+        lowsp_quantile = np.quantile(cadf['num_spikes_pair'].to_numpy(), 0.05)
+        stat_record(stat_fn, False, '%s 0.05 spike count quantile = %0.2f'%(ca, lowsp_quantile))
 
         # Get data/stats
         cadf_b = cadf[cadf['border']].reset_index(drop=True)
@@ -176,110 +171,76 @@ def omniplot_pairfields(expdf, save_dir=None):
         ax_frac[1].plot(spike_threshs, sdict_b['n']/sdict_all['n'], c=ca_c[ca], label=ca, linewidth=linew)
 
         # Binomial test for all fields
-        signum_all, n_all = sdict_all['shift_signum'][0], sdict_all['n'][0]
-        p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
-        stat_txt = '%s, Binomial test, greater than p=0.05, %d/%d, p%s'%(ca, signum_all, n_all, p2str(p_binom))
-        stat_record(stat_fn, False, stat_txt)
-        ax[1, caid].annotate('Sig. Frac. (All)\n%d/%d=%0.3f\np%s'%(signum_all, n_all, signum_all/n_all, p2str(p_binom)), xy=(0.1, 0.5), xycoords='axes fraction', fontsize=legendsize, color=ca_c[ca])
+        for idx, ntresh in enumerate(spike_threshs):
+
+            signum_all, n_all = sdict_all['shift_signum'][idx], sdict_all['n'][idx]
+            p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
+            stat_txt = '%s, Thresh=%d, Binomial test, greater than p=0.05, %d/%d=%0.4f, $p%s$'%(ca, ntresh, signum_all, n_all, signum_all/n_all, p2str(p_binom))
+            stat_record(stat_fn, False, stat_txt)
+            # ax[1, caid].annotate('Sig. Frac. (All)\n%d/%d=%0.3f\np%s'%(signum_all, n_all, signum_all/n_all, p2str(p_binom)), xy=(0.1, 0.5), xycoords='axes fraction', fontsize=legendsize, color=ca_c[ca])
 
 
 
     # # Statistical test
+    chipval_dict = dict(CA1_be=[], CA2_be=[], CA3_be=[], all_CA13=[], all_CA23=[], all_CA12=[])
+    fishpval_dict = dict(CA1_be=[], CA2_be=[], CA3_be=[], all_CA13=[], all_CA23=[], all_CA12=[])
+    rspval_dict = dict(CA1_be=[], CA2_be=[], CA3_be=[], all_CA13=[], all_CA23=[], all_CA12=[])
     for idx, ntresh in enumerate(spike_threshs):
-
-        # Between border cases for each CA
-        for ca in ['CA%d'%i for i in range(1, 4)]:
+        stat_record(stat_fn, False, '======= Threshold=%d ======'%(ntresh))
+        # # Border vs non-border for each CA
+        for ca in ['CA%d' % i for i in range(1, 4)]:
             cad_b = data_dict[ca]['border']
             cad_nb = data_dict[ca]['nonborder']
-            rs_bord_stat, rs_bord_pR = ranksums(cad_b['allR'][idx], cad_nb['allR'][idx])
 
+            # KW test for border median R
+            rs_bord_pR, (border_n, nonborder_n), mdns, rs_txt = my_kruskal_2samp(cad_b['allR'][idx], cad_nb['allR'][idx], 'border', 'nonborder')
+            stat_record(stat_fn, False, "%s, Median R, border vs non-border: %s" % (ca, rs_txt))
+            rspval_dict[ca + '_be'].append(rs_bord_pR)
+
+            # Chisquared test for border fractions
             contin = pd.DataFrame({'border': [cad_b['shift_signum'][idx],
                                               cad_b['shift_nonsignum'][idx]],
                                    'nonborder': [cad_nb['shift_signum'][idx],
-                                                 cad_nb['shift_nonsignum'][idx]]})
-            try:
-                chi_stat, chi_pborder, chi_dof, _ = chi2_contingency(contin)
-            except ValueError:
-                chi_stat, chi_pborder, chi_dof = 0, 1, 0
-
-            frac_b, signum_b, nonsignum_b = cad_b['sigfrac_shift'][idx], cad_b['shift_signum'][idx], cad_b['shift_nonsignum'][idx]
-            frac_nb, signum_nb, nonsignum_nb = cad_nb['sigfrac_shift'][idx], cad_nb['shift_signum'][idx], cad_nb['shift_nonsignum'][idx]
-            f_pborder = fisherexact(contin.to_numpy())
-            border_n, nonborder_n = cad_b['n'][idx], cad_nb['n'][idx]
-            stattxt = "Threshold=%d, %s, border vs non-border: Chi-square  test  for  significant  fraction, \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-            stat_record(stat_fn, False, stattxt % ((ntresh, ca, chi_dof, border_n + nonborder_n, chi_stat,
-                                                    p2str(chi_pborder), p2str(f_pborder))))
+                                                 cad_nb['shift_nonsignum'][idx]]}).to_numpy()
+            chi_pborder, _, txt_chiborder = my_chi_2way(contin)
+            _, _, fishtxt = my_fisher_2way(contin)
+            stat_record(stat_fn, False, "%s, Significant fraction, border vs non-border: %s, %s" % (ca, txt_chiborder, fishtxt))
             chipval_dict[ca + '_be'].append(chi_pborder)
 
-            mdnR_border, mdnR2_nonrboder = cad_b['medianR'][idx], cad_nb['medianR'][idx]
-            stattxt = "Threshold=%d, %s, border vs non-border: Mann-Whitney U test for medianR, %0.3f vs %0.3f, U(N_{border}=%d, N_{nonborder}=%d)=%0.2f, p%s."
-            stat_record(stat_fn, False, stattxt % (ntresh, ca, mdnR_border, mdnR2_nonrboder, border_n,
-                                                   nonborder_n, rs_bord_stat, p2str(rs_bord_pR)))
-            rspval_dict[ca + '_be'].append(rs_bord_pR)
+
+        # # Between CAs for All
+        bcase = 'all'
+        ca1d, ca2d, ca3d = data_dict['CA1'][bcase], data_dict['CA2'][bcase], data_dict['CA3'][bcase]
+
+        # 3-sample KW test for median R, CA1 vs CA2 vs CA3
+        kruskal_ps, dunn_pvals, (n1, n2, n3), _, kw3txt = my_kruskal_3samp(ca1d['allR'][idx], ca2d['allR'][idx],
+                                                                           ca3d['allR'][idx], 'CA1', 'CA2', 'CA3')
+
+        stat_record(stat_fn, False, 'Median R between CAs, %s'%(kw3txt))
+        rs_p12R, rs_p23R, rs_p13R = dunn_pvals
+        rspval_dict['all_CA12'].append(rs_p12R)
+        rspval_dict['all_CA23'].append(rs_p23R)
+        rspval_dict['all_CA13'].append(rs_p13R)
 
 
-        # Between CAs for each border cases
-        for bcase in ['all', 'border', 'nonborder']:
-            ca1d, ca2d, ca3d = data_dict['CA1'][bcase], data_dict['CA2'][bcase], data_dict['CA3'][bcase]
 
-            rs_stat13, rs_p13R = ranksums(ca1d['allR'][idx], ca3d['allR'][idx])
-            rs_stat23, rs_p23R = ranksums(ca2d['allR'][idx], ca3d['allR'][idx])
-            rs_stat12, rs_p12R = ranksums(ca1d['allR'][idx], ca2d['allR'][idx])
+        # Chisquared test for sig fractions between CAs
+        for canum1, canum2 in ((1, 2), (2, 3), (1, 3)):
 
-            contin13 = pd.DataFrame({'CA1': [ca1d['shift_signum'][idx], ca1d['shift_nonsignum'][idx]],
-                                     'CA3': [ca3d['shift_signum'][idx], ca3d['shift_nonsignum'][idx]]})
+            cafirst, casecond = 'CA%d'%(canum1), 'CA%d'%(canum2)
+            cadictfirst, cadictsecond = data_dict[cafirst][bcase], data_dict[casecond][bcase]
+            contin_btwca = pd.DataFrame({cafirst: [cadictfirst['shift_signum'][idx], cadictfirst['shift_nonsignum'][idx]],
+                                     casecond: [cadictsecond['shift_signum'][idx], cadictsecond['shift_nonsignum'][idx]]}).to_numpy()
+            chi_pbtwca, _, txt_chibtwca = my_chi_2way(contin_btwca)
 
-            contin23 = pd.DataFrame({'CA1': [ca2d['shift_signum'][idx], ca2d['shift_nonsignum'][idx]],
-                                     'CA2': [ca3d['shift_signum'][idx], ca3d['shift_nonsignum'][idx]]})
-
-            contin12 = pd.DataFrame({'CA1': [ca1d['shift_signum'][idx], ca1d['shift_nonsignum'][idx]],
-                                     'CA2': [ca2d['shift_signum'][idx], ca2d['shift_nonsignum'][idx]]})
-
-            try:
-                chi_stat13, chi_p13, chi_dof13, _ = chi2_contingency(contin13)
-            except ValueError:
-                chi_stat13, chi_p13, chi_dof13 = 0, 1, 0
-            try:
-                chi_stat23, chi_p23, chi_dof23, _ = chi2_contingency(contin23)
-            except ValueError:
-                chi_stat23, chi_p23, chi_dof23 = 0, 1, 0
-            try:
-                chi_stat12, chi_p12, chi_dof12, _ = chi2_contingency(contin12)
-            except ValueError:
-                chi_stat12, chi_p12, chi_dof12 = 0, 1, 0
-
-            f_p13 = fisherexact(contin13.to_numpy())
-            f_p23 = fisherexact(contin23.to_numpy())
-            f_p12 = fisherexact(contin12.to_numpy())
-
-            nCA1, nCA2, nCA3 = ca1d['n'][idx], ca2d['n'][idx], ca3d['n'][idx]
-            stattxt = "Threshold=%d, %s, CA1 vs CA3: Chi-square  test  for  significant  fraction, \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, chi_dof13, nCA1 + nCA3, chi_stat13, p2str(chi_p13), p2str(f_p13)))
-            stattxt = "Threshold=%d, %s, CA2 vs CA3: Chi-square  test  for  significant  fraction, \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, chi_dof23, nCA2 + nCA3, chi_stat23, p2str(chi_p23), p2str(f_p23)))
-            stattxt = "Threshold=%d, %s, CA1 vs CA2: Chi-square  test  for  significant  fraction, \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, chi_dof12, nCA1 + nCA2, chi_stat12, p2str(chi_p12), p2str(f_p12)))
-
-            mdnR1, mdnR2, mdnR3 = ca1d['medianR'][idx], ca2d['medianR'][idx], ca3d['medianR'][idx]
-            stattxt = "Threshold=%d, %s, CA1 vs CA3: Mann-Whitney U test for medianR, %0.3f vs %0.3f, U(N_{CA1}=%d, N_{CA3}=%d)=%0.2f, p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, mdnR1, mdnR3, nCA1, nCA3, rs_stat13, p2str(rs_p13R)))
-            stattxt = "Threshold=%d, %s, CA2 vs CA3: Mann-Whitney U test for medianR, %0.3f vs %0.3f, U(N_{CA2}=%d, N_{CA3}=%d)=%0.2f, p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, mdnR2, mdnR3, nCA2, nCA3, rs_stat23, p2str(rs_p23R)))
-            stattxt = "Threshold=%d, %s, CA1 vs CA2: Mann-Whitney U test for medianR, %0.3f vs %0.3f, U(N_{CA1}=%d, N_{CA2}=%d)=%0.2f, p%s."
-            stat_record(stat_fn, False, stattxt % \
-                        (ntresh, bcase, mdnR1, mdnR2, nCA1, nCA2, rs_stat12, p2str(rs_p12R)))
-            if bcase == 'all':
-                chipval_dict['all_CA13'].append(chi_p13)
-                chipval_dict['all_CA23'].append(chi_p23)
-                chipval_dict['all_CA12'].append(chi_p12)
-                rspval_dict['all_CA13'].append(rs_p13R)
-                rspval_dict['all_CA23'].append(rs_p23R)
-                rspval_dict['all_CA12'].append(rs_p12R)
+            fish_pbtwca, _, fishtxt_btwca = my_fisher_2way(contin_btwca)
+            stat_record(stat_fn, False, "Between CAs, Significant fraction, %s vs %s: %s, %s" % (cafirst, casecond, txt_chibtwca, fishtxt_btwca))
+            chipval_dict['all_CA%d%d'%(canum1, canum2)].append(chi_pbtwca)
+            fishpval_dict['all_CA%d%d'%(canum1, canum2)].append(fish_pbtwca)
+        chiqs = fdr_bh_correction(np.array([chipval_dict['all_CA12'][-1], chipval_dict['all_CA23'][-1], chipval_dict['all_CA13'][-1]]))
+        fishqs = fdr_bh_correction(np.array([fishpval_dict['all_CA12'][-1], fishpval_dict['all_CA23'][-1], fishpval_dict['all_CA13'][-1]]))
+        stat_record(stat_fn, False, r"Chisquare Benjamini-Hochberg correction, $p12=%s$, $p23=%s$, $p13=%s$" % (p2str(chiqs[0]), p2str(chiqs[1]), p2str(chiqs[2])))
+        stat_record(stat_fn, False, r"Fisher Benjamini-Hochberg correction, $p12=%s$, $p23=%s$, $p13=%s$" % (p2str(fishqs[0]), p2str(fishqs[1]), p2str(fishqs[2])))
 
 
     # Plot pvals for reference
@@ -316,8 +277,8 @@ def omniplot_pairfields(expdf, save_dir=None):
         ax[i, 2].set_ylabel('')
 
     ax_frac[0].set_title(' ', fontsize=titlesize)
-    ax_frac[0].set_ylabel('All fields\nfraction', fontsize=fontsize)
-    ax_frac[1].set_ylabel('Border fields\nfraction', fontsize=fontsize)
+    ax_frac[0].set_ylabel('All pairs\nfraction', fontsize=fontsize)
+    ax_frac[1].set_ylabel('Border pairs\nfraction', fontsize=fontsize)
 
 
     for ax_each in np.concatenate([ax.ravel(), ax_frac]):
@@ -344,9 +305,9 @@ def omniplot_pairfields(expdf, save_dir=None):
         if i != 0:
             ax_directR[i].set_yticklabels(['']*len(yticks))
 
-        yticks = [0, 0.5, 1]
+        yticks = [0, 0.1, 0.2, 0.3, 0.4]
         ax_directFrac[i].set_yticks(yticks)
-        ax_directFrac[i].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+        #         ax_directFrac[i].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
         if i != 0:
             ax_directFrac[i].set_yticklabels(['']*len(yticks))
     for ax_each in ax_frac:
@@ -354,13 +315,32 @@ def omniplot_pairfields(expdf, save_dir=None):
         ax_each.set_yticks(np.arange(0, 1.1, 0.1), minor=True)
         ax_each.set_yticklabels(['0', '', '1'])
 
-    ax_directFrac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
-    ax_frac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
+    ax_directFrac[1].set_xlabel('Spike-pair count\nthreshold', ha='center', fontsize=fontsize)
+    ax_frac[1].set_xlabel('Spike-pair count\nthreshold', ha='center', fontsize=fontsize)
 
     fig_pval.tight_layout()
     fig.savefig(join(save_dir, 'exp_pair_directionality.png'), dpi=dpi)
     fig.savefig(join(save_dir, 'exp_pair_directionality.eps'), dpi=dpi)
     fig_pval.savefig(join(save_dir, 'exp_pair_TestSignificance.png'), dpi=dpi)
+
+def compare_single_vs_pair_directionality():
+    singledata_pth = 'results/emankin/singlefield_df.pickle'
+    pairdata_pth = 'results/emankin/pairfield_df.pickle'
+    singledf = pd.read_pickle(singledata_pth)
+    pairdf = pd.read_pickle(pairdata_pth)
+    stat_fn = 'fig4_SinglePair_R_Comparisons.txt'
+    stat_record(stat_fn, True)
+    for caid, ca in enumerate(['CA1', 'CA2', 'CA3']):
+
+        single_cadf = singledf[singledf['ca']==ca]
+        pair_cadf = pairdf[pairdf['ca']==ca]
+
+        singleR = single_cadf['rate_R'].to_numpy()
+        pairR = pair_cadf['rate_Rp'].to_numpy()
+
+        p, _, _, txt = my_kruskal_2samp(singleR, pairR, 'single', 'pair')
+        stat_record(stat_fn, False, 'Compare Single & Pair R: %s, %s' % (ca, txt))
+
 
 def plot_kld(expdf, save_dir=None):
     stat_fn = 'fig5_kld.txt'
@@ -459,7 +439,7 @@ def plot_kld(expdf, save_dir=None):
     fig_kld_thresh.savefig(join(save_dir, 'exp_kld_thresh.%s'%(figext)), dpi=dpi)
 
 def plot_pair_single_angles_analysis(expdf, save_dir):
-    stat_fn = 'fig5_pairsingle_angles.txt'
+    stat_fn = 'fig_TBA_pairsingle_angles.txt'
     stat_record(stat_fn, True)
     figw = total_figw*0.9/2
     figh = total_figw*0.9/4.5
@@ -639,13 +619,12 @@ def plot_pair_single_angles_analysis(expdf, save_dir):
 
     fig.tight_layout()
     fig.subplots_adjust(wspace=0.2, hspace=1)
-    fig.savefig(join(save_dir, 'pair_single_angles.%s'%(figext)), dpi=dpi)
-
     fig_test.tight_layout()
     fig_test.subplots_adjust(wspace=0.2, hspace=1)
-    fig_test.savefig(join(save_dir, 'pair_single_angles_test.%s'%(figext)), dpi=dpi)
-
-    fig_colorbar.savefig(join(save_dir, 'pair_single_angles_colorbar.%s'%(figext)), dpi=dpi)
+    for figext in ['png']:
+        fig.savefig(join(save_dir, 'pair_single_angles.%s'%(figext)), dpi=dpi)
+        fig_test.savefig(join(save_dir, 'pair_single_angles_test.%s'%(figext)), dpi=dpi)
+        fig_colorbar.savefig(join(save_dir, 'pair_single_angles_colorbar.%s'%(figext)), dpi=dpi)
 
 
 def plot_pair_correlation(expdf, save_dir=None):
@@ -664,7 +643,7 @@ def plot_pair_correlation(expdf, save_dir=None):
                                                       markersize=markersize, linew=linew)
         ax[0, caid].set_title(ca, fontsize=titlesize)
         nsamples = np.sum((~np.isnan(x)) & (~np.isnan(y)))
-        stat_record(stat_fn, False, '%s A->B, y = %0.2fx + %0.2f, r(%d)=%0.2f, p%s' % \
+        stat_record(stat_fn, False, '%s A->B, y = %0.2fx + %0.2f, $r_{(%d)}=%0.2f, p=%s$' % \
                     (ca, regress['aopt'] * 2 * np.pi, regress['phi0'], nsamples, regress['rho'], p2str(regress['p'])))
 
         # B->A
@@ -672,30 +651,27 @@ def plot_pair_correlation(expdf, save_dir=None):
                                                       markersize=markersize, linew=linew)
 
         nsamples = np.sum((~np.isnan(x)) & (~np.isnan(y)))
-        stat_record(stat_fn, False, '%s B->A, y = %0.2fx + %0.2f, r(%d))=%0.2f, p%s' % \
+        stat_record(stat_fn, False, '%s B->A, y = %0.2fx + %0.2f, $r_{(%d)}=%0.2f, p=%s$' % \
                     (ca, regress['aopt'] * 2 * np.pi, regress['phi0'], nsamples, regress['rho'], p2str(regress['p'])))
 
 
-    for ax_each in ax.ravel():
-        ax_each.tick_params(labelsize=ticksize)
-        ax_each.spines["top"].set_visible(False)
-        ax_each.spines["right"].set_visible(False)
-        ax_each.set_xticks([0, 0.5, 1])
-        ax_each.set_xticklabels(['', '', ''])
 
-    ax[1, 1].set_xticks([0, 0.5, 1])
-    ax[1, 1].set_xticklabels(['0', '', '1'])
-    plt.setp(ax[1, 0].get_xticklabels(), visible=False)
-    plt.setp(ax[0, 2].get_xticklabels(), visible=False)
+    for i in range(3):
+        for j in range(2):
+            ax[j, i].tick_params(labelsize=ticksize)
+            ax[j, i].spines["top"].set_visible(False)
+            ax[j, i].spines["right"].set_visible(False)
+
+        plt.setp(ax[0, i].get_xticklabels(), visible=False)
+        ax[1, i].set_xticks([0, 0.5, 1])
+        ax[1, i].set_xticklabels(['0', '', '1'])
+
     ax[1, 1].set_xlabel('Field overlap', fontsize=fontsize)
-
-    ax[1, 2].set_xticks([0, 0.3, 0.5 , 1])
-    ax[1, 2].set_xticklabels(['', '0.3', '' , ''])
-
     fig.text(0.01, 0.35, 'Phase shift (rad)', rotation=90, fontsize=fontsize)
-
     fig.tight_layout()
-    fig.savefig(join(save_dir, 'exp_paircorr.%s'%(figext)), dpi=dpi)
+    fig.savefig(join(save_dir, 'exp_paircorr.png'), dpi=dpi)
+    fig.savefig(join(save_dir, 'exp_paircorr.eps'), dpi=dpi)
+
 
 
 def plot_ALL_examples_correlogram(expdf):
@@ -967,20 +943,12 @@ def plot_example_correlogram(expdf, save_dir=None):
 
         # Plot Extrinsic/Intrinsic examples
         if plottype == 'exin':
-            concated = np.concatenate([binsABnorm, binsBAnorm])
-
             ax_exin[0, plotaxidx].bar(edmAB, binsABnorm, width=edmAB[1] - edmAB[0], color='tan', label='A->B')
             ax_exin[0, plotaxidx].bar(edmBA, binsBAnorm, width=edmBA[1] - edmBA[0], color='slategray', label='B->A')
-            # ax_exin[0, plotaxidx].plot([0, 0], [0, concated.max()], c='k')
-            # ax_exin[0, plotaxidx].plot([0, 0], [0, concated.min()], c='k')
             ax_exin[0, plotaxidx].set_title('Intrinsicity=%0.2f' % (intrinsicity), fontsize=legendsize)
-
-
             ax_exin[1, plotaxidx].bar(edmAB, binsABnorm, width=edmAB[1] - edmAB[0], color='tan', label='A->B')
             ax_exin[1, plotaxidx].bar(edmBA, np.flip(binsBAnorm), width=edmBA[1] - edmBA[0], color='slategray',
                            label='Flipped B->A')
-            # ax_exin[1, plotaxidx].plot([0, 0], [0, concated.max()], c='k')
-            # ax_exin[1, plotaxidx].plot([0, 0], [0, concated.min()], c='k')
             ax_exin[1, plotaxidx].set_xlabel('Time lag (s)', fontsize=fontsize)
             ax_exin[1, plotaxidx].set_title('Extrinsicity=%0.2f' % (extrinsicity), fontsize=legendsize)
             ax_exin[1, plotaxidx].set_xticks([-0.15, 0, 0.15])
@@ -1105,11 +1073,6 @@ def plot_example_exin(expdf, save_dir):
         binsAB, edgesAB, signalAB, alphasAB = corrAB[0], corrAB[1], corrAB[2], corrAB[4]
         binsBA, edgesBA, signalBA, alphasBA = corrBA[0], corrBA[1], corrBA[2], corrBA[4]
 
-        # Phase
-        #     corr_info_AB_phase, corr_info_BA_phase = expdf.loc[pairid, ['corr_info_AB_phase', 'corr_info_BA_phase']]
-        #     edgesAB, edgesBA = np.linspace(-np.pi, np.pi, 36), np.linspace(-np.pi, np.pi, 36)
-        #     _, binsAB = corr_info_AB_phase
-        #     _, binsBA = corr_info_BA_phase
 
         edmAB, edmBA = midedges(edgesAB), midedges(edgesBA)
         binsABnorm, binsBAnorm = binsAB / binsAB.sum(), binsBA / binsBA.sum()
@@ -1124,10 +1087,8 @@ def plot_example_exin(expdf, save_dir):
         customlegend(ax[1], fontsize=legendsize, bbox_to_anchor=(0.01, 0.5), loc='lower left')
 
         for ax_each in ax.ravel():
-            ax_each.set_xticks([-0.15, -0.1, 0.05, 0, 0.05, 0.1, 0.15])
+            ax_each.set_xticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15])
             ax_each.set_xticklabels(['', '-0.1', '', '0', '', '0.1', ''])
-            #         ax_each.set_xticks([-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3])
-            #         ax_each.set_xticklabels(['', '-0.2', '', '0', '', '0.2', ''])
             ax_each.set_xlabel('Time lag (s)', fontsize=legendsize)
             ax_each.set_yticks([])
             ax_each.spines['left'].set_visible(False)
@@ -1152,7 +1113,7 @@ def plot_example_exin(expdf, save_dir):
 
 
     axtheta_y = axtraj_y - axh2
-    axtheta_xoffset, axtheta_yoffset = 0.085, 0.09
+    axtheta_xoffset, axtheta_yoffset = 0.085, 0.095
     axtheta_wm, axtheta_hm = 0.9, 0.65
     axes_theta = [fig_exin.add_axes([0+axtheta_xoffset-biggp_xgap, axtheta_y+axtheta_yoffset, axw*axtheta_wm, axh2*axtheta_hm]),
                   fig_exin.add_axes([0.25+axtheta_xoffset+btwgp_xgap-biggp_xgap, axtheta_y+axtheta_yoffset, axw*axtheta_wm, axh2*axtheta_hm]),
@@ -1160,7 +1121,7 @@ def plot_example_exin(expdf, save_dir):
                   fig_exin.add_axes([0.75+axtheta_xoffset+btwgp_xgap+biggp_xoffset+biggp_xgap, axtheta_y+axtheta_yoffset, axw*axtheta_wm, axh2*axtheta_hm])]
 
     axprecess_y = axtheta_y - axh1
-    axprecess_xoffset, axprecess_yoffset = 0.11, 0.13
+    axprecess_xoffset, axprecess_yoffset = 0.11, 0.185
     axprecess_wm, axprecess_hm = 0.65, 0.6
     axes_precess = [fig_exin.add_axes([0+axprecess_xoffset-biggp_xgap, axprecess_y+axprecess_yoffset, axw*axprecess_wm, axh1*axprecess_hm]),
                     fig_exin.add_axes([0.25+axprecess_xoffset+btwgp_xgap-biggp_xgap, axprecess_y+axprecess_yoffset, axw*axprecess_wm, axh1*axprecess_hm]),
@@ -1240,11 +1201,15 @@ def plot_example_exin(expdf, save_dir):
     ax_exin[2, 0].set_yticks([0, np.pi, 2*np.pi])
     ax_exin[2, 0].set_yticklabels(['0', '', '$2\pi$'])
 
-    fig_exin.text(0.035, 0.4, 'Phase\n(rad)', rotation=90, fontsize=fontsize)
+    fig_exin.text(0.035, 0.475, 'Phase\n(rad)', rotation=90, fontsize=fontsize)
     fig_exin.text(0.035, 0.05, 'Normalized\nspike count', rotation=90, fontsize=fontsize)
 
 
-    fig_exin.savefig(join(save_dir, 'examples_exintrinsicity.%s'%(figext)), dpi=dpi)
+
+
+    fig_exin.savefig(join(save_dir, 'examples_exintrinsicity.png'), dpi=dpi)
+    fig_exin.savefig(join(save_dir, 'examples_exintrinsicity.eps'), dpi=dpi)
+
 
 
 def plot_exintrinsic(expdf, save_dir):
@@ -1278,21 +1243,19 @@ def plot_exintrinsic(expdf, save_dir):
         n_in = np.sum(corr_overlap_ratio <= 0)
         n_total = n_ex + n_in
         contindf_dict[ca] = [n_ex, n_in]
-        chistat, pchi = chisquare([n_ex, n_in])
-        stattxt = 'Oneway Fraction,  %s, %d/%d, \chi^2(%d, N=%d)=%0.2f, p%s'
-        stat_record(stat_fn, False, stattxt % (ca, n_ex, n_total, 1, n_total, chistat, p2str(pchi)))
+        pchi, _, chitxt = my_chi_1way([n_ex, n_in])
+        stat_record(stat_fn, False, 'Oneway Fraction, %s, %d:%d=%0.2f, %s'%(ca, n_ex, n_in, n_ex/n_in, chitxt) )
 
         # 1-sample t test
         mean_ratio = np.mean(corr_overlap_ratio)
-        ttest_stat, p_1d1samp = ttest_1samp(corr_overlap_ratio, 0)
-        stattxt = 'Ex-In, %s, mean=%0.4f, t(%d)=%0.2f, p%s'
-        stat_record(stat_fn, False, stattxt % (ca, mean_ratio, n_total-1, ttest_stat, p2str(p_1d1samp)))
+        p_1d1samp, _, ttest_txt = my_ttest_1samp(corr_overlap_ratio, 0)
+        stat_record(stat_fn, False, 'Ex-In, %s, %s' % (ca, ttest_txt))
 
         # Plot scatter 2d
         ax_exin[0, caid].scatter(corr_overlap_flip, corr_overlap, s=ms, c=ca_c[ca], marker='.')
         ax_exin[0, caid].plot([0.3, 1], [0.3, 1], c='k', linewidth=0.75)
-        ax_exin[0, caid].annotate('%0.2f'%(n_ex/n_total), xy=(0.05, 0.17), xycoords='axes fraction', size=legendsize, color='r')
-        ax_exin[0, caid].annotate('p%s'%(p2str(pchi)), xy=(0.05, 0.025), xycoords='axes fraction', size=legendsize)
+        ax_exin[0, caid].annotate('%0.2f'%(n_ex/n_in), xy=(0.015, 0.17), xycoords='axes fraction', size=legendsize, color='r')
+        ax_exin[0, caid].annotate('p=%s'%(p2str(pchi)), xy=(0.015, 0.025), xycoords='axes fraction', size=legendsize)
         ax_exin[0, 1].set_xlabel('Extrinsicity', fontsize=fontsize)
         ax_exin[0, caid].set_yticks([0, 1])
         ax_exin[0, caid].set_xlim(0, 1)
@@ -1308,7 +1271,7 @@ def plot_exintrinsic(expdf, save_dir):
                                              histtype='stepfilled')
         ax_exin[1, caid].plot([mean_ratio, mean_ratio], [0, bins.max()], c='k', linewidth=0.75)
         ax_exin[1, caid].annotate('$\mu=$'+'%0.3f'%(mean_ratio), xy=(0.05, 0.85), xycoords='axes fraction', size=legendsize)
-        ax_exin[1, caid].annotate('p%s'%(p2str(p_1d1samp)), xy=(0.05, 0.65), xycoords='axes fraction', size=legendsize)
+        ax_exin[1, caid].annotate('p=%s'%(p2str(p_1d1samp)), xy=(0.05, 0.7), xycoords='axes fraction', size=legendsize)
         ax_exin[1, caid].set_xticks([])
         ax_exin[1, caid].set_yticks([0, 0.1/width] )
         ax_exin[1, caid].set_yticklabels(['0', '0.1'])
@@ -1322,14 +1285,12 @@ def plot_exintrinsic(expdf, save_dir):
     ax_exin[0, 0].set_ylabel('Intrinsicity', fontsize=fontsize)
     ax_exin[1, 0].set_ylabel('Normalized count', fontsize=fontsize)
     ax_exin[1, 1].set_xlabel('Extrinsicity - Intrinsicity', fontsize=fontsize)
-    ax_exin[0, 1].set_xticks([0, 1])
-    ax_exin[0, 1].set_xticklabels(['0', '1'])
-    ax_exin[1, 1].set_xticks([-0.4, 0, 0.4])
-    ax_exin[1, 1].set_xticklabels(['-0.4', '0', '0.4'])
-    for i in [0, 2]:
-        plt.setp(ax_exin[0, i].get_xticklabels(), visible=False)
-        plt.setp(ax_exin[1, i].get_xticklabels(), visible=False)
 
+    for i in [0, 2]:
+        ax_exin[0, i].set_xticks([0, 1])
+        ax_exin[0, i].set_xticklabels(['0', '1'])
+        ax_exin[1, i].set_xticks([-0.4, 0, 0.4])
+        ax_exin[1, i].set_xticklabels(['-0.4', '0', '0.4'])
     for ax_each in ax_exin.ravel():
         ax_each.spines['top'].set_visible(False)
         ax_each.spines['right'].set_visible(False)
@@ -1346,31 +1307,23 @@ def plot_exintrinsic(expdf, save_dir):
     t_23, p_23 = ttest_ind(ratio_2, ratio_3, equal_var=equal_var)
     t_12, p_12 = ttest_ind(ratio_1, ratio_2, equal_var=equal_var)
 
-    zratio13, zp13 = ranksums(ratio_1, ratio_3)
-    stat_record(stat_fn, False, 'Welch\'s t-test: CA1 vs CA3, t(%d)=%0.2f, p%s' % (n1 + n3 - 2, t_13, p2str(p_13)))
-    stat_record(stat_fn, False, 'Welch\'s t-test: CA2 vs CA3, t(%d)=%0.2f, p%s' % (n2 + n3 - 2, t_23, p2str(p_23)))
-    stat_record(stat_fn, False, 'Welch\'s t-test: CA1 vs CA2, t(%d)=%0.2f, p%s' % (n1 + n2 - 2, t_12, p2str(p_12)))
-    stat_record(stat_fn, False, 'RS-test: CA1 vs CA3, U=%0.2f, p%s' % (zratio13, p2str(zp13)))
+    stat_record(stat_fn, False, 'Welch\'s t-test: CA1 vs CA3, t(%d)=%0.2f, p=%s' % (n1 + n3 - 2, t_13, p2str(p_13)))
+    stat_record(stat_fn, False, 'Welch\'s t-test: CA2 vs CA3, t(%d)=%0.2f, p=%s' % (n2 + n3 - 2, t_23, p2str(p_23)))
+    stat_record(stat_fn, False, 'Welch\'s t-test: CA1 vs CA2, t(%d)=%0.2f, p=%s' % (n1 + n2 - 2, t_12, p2str(p_12)))
 
     contindf = pd.DataFrame(contindf_dict)
     contindf13, contindf23, contindf12 = contindf[['CA1', 'CA3']], contindf[['CA2', 'CA3']], contindf[['CA1', 'CA2']]
-    n13, n23, n12 = np.sum(contindf13.to_numpy()), np.sum(contindf23.to_numpy()), np.sum(contindf12.to_numpy())
-    fisherp13 = fisherexact(contindf13.to_numpy())
-    fisherp23 = fisherexact(contindf23.to_numpy())
-    fisherp12 = fisherexact(contindf12.to_numpy())
-    chi13, pchi13, dof13, _ = chi2_contingency(contindf13.to_numpy())
-    chi23, pchi23, dof23, _ = chi2_contingency(contindf23.to_numpy())
-    chi12, pchi12, dof12, _ = chi2_contingency(contindf12.to_numpy())
+    fisherp12, n12, fishertxt12 = my_fisher_2way(contindf12.to_numpy())
+    fisherp23, n23, fishertxt23 = my_fisher_2way(contindf23.to_numpy())
+    fisherp13, n13, fishertxt13 = my_fisher_2way(contindf13.to_numpy())
 
-    stattxt = "Two-way Ex-in Frac. CA1 vs CA3 \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-    stat_record(stat_fn, False, stattxt % (dof13, n13-2, chi13, p2str(pchi13), p2str(fisherp13)))
-    stattxt = "Two-way Ex-in Frac. CA2 vs CA3 \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-    stat_record(stat_fn, False, stattxt % (dof23, n23-2, chi23, p2str(pchi23), p2str(fisherp23)))
-    stattxt = "Two-way Ex-in Frac. CA1 vs CA2 \chi^2(%d, N=%d)=%0.2f, p%s. Fisher exact test p%s."
-    stat_record(stat_fn, False, stattxt % (dof12, n12-2, chi12, p2str(pchi12), p2str(fisherp12)))
-
+    stat_record(stat_fn, False, "Ex-in Frac. CA1 vs CA2, %s" % (fishertxt12))
+    stat_record(stat_fn, False, "Ex-in Frac. CA2 vs CA3, %s" % (fishertxt23))
+    stat_record(stat_fn, False, "Ex-in Frac. CA1 vs CA3, %s" % (fishertxt13))
     fig_exin.tight_layout()
-    fig_exin.savefig(join(save_dir, 'exp_exintrinsic.%s'%(figext)), dpi=dpi)
+
+    fig_exin.savefig(join(save_dir, 'exp_exintrinsic.png'), dpi=dpi)
+    fig_exin.savefig(join(save_dir, 'exp_exintrinsic.eps'), dpi=dpi)
 
 
 def plot_exintrinsic_concentration(expdf, save_dir=None):
@@ -1401,7 +1354,7 @@ def plot_exintrinsic_concentration(expdf, save_dir=None):
         yex_ax, yex_den = circular_density_1d(phaselag_ex, 4 * np.pi, 50, (-np.pi, np.pi))
         yin_ax, yin_den = circular_density_1d(phaselag_in, 4 * np.pi, 50, (-np.pi, np.pi))
         F_k, pval_k = circ_ktest(phaselag_ex, phaselag_in)
-        stat_record(stat_fn, False, '%s Ex-in concentration difference F(%d, %d)=%0.2f, p%s'% \
+        stat_record(stat_fn, False, '%s Ex-in concentration difference F(%d, %d)=%0.2f, p=%s'% \
                     (ca, phaselag_ex.shape[0], phaselag_in.shape[0], F_k, p2str(pval_k)))
 
         ax_con[caid].plot(yex_ax, yex_den, c='r', label='ex', linewidth=linew)
@@ -1413,7 +1366,7 @@ def plot_exintrinsic_concentration(expdf, save_dir=None):
         ax_con[caid].tick_params(labelsize=ticksize)
 
 
-        ax_con[caid].annotate('Bartlett\'s\np%s'%(p2str(pval_k)), xy=(0.05, 0.7), xycoords='axes fraction', size=legendsize)
+        ax_con[caid].annotate('Bartlett\'s\np=%s'%(p2str(pval_k)), xy=(0.05, 0.7), xycoords='axes fraction', size=legendsize)
 
         ax_con[caid].annotate('Ex.', xy=(0.4, 0.5), xycoords='axes fraction', size=legendsize, color='r')
         ax_con[caid].annotate('In.', xy=(0.7, 0.1), xycoords='axes fraction', size=legendsize, color='b')
@@ -1433,7 +1386,8 @@ def plot_exintrinsic_concentration(expdf, save_dir=None):
 
 
 
-def plot_pairangle_similarity_analysis(expdf, save_dir=None, nap_thresh=1):
+
+def plot_pairangle_similarity_analysis(expdf, save_dir=None):
     stat_fn = 'fig6_pair_exin_simdisim.txt'
     stat_record(stat_fn, True)
     ratio_key, oplus_key, ominus_key = 'overlap_ratio', 'overlap_plus', 'overlap_minus'
@@ -1441,23 +1395,18 @@ def plot_pairangle_similarity_analysis(expdf, save_dir=None, nap_thresh=1):
     anglekey1, anglekey2 = 'rate_angle1', 'rate_angle2'
     figl = total_figw/2/3
 
-    fig_1d, ax_1d = plt.subplots(1, 3, figsize=(figl*4, figl*2), sharex='row', sharey='row')
-    fig_1dca, ax_1dca = plt.subplots(1, 2, figsize=(figl*4, figl*2.5), sharex=True, sharey=True)
-    fig_2d, ax_2d = plt.subplots(2, 3, figsize=(figl*3, figl*2.5), sharex='row', sharey='row')
+    fig_1d, ax_1d = plt.subplots(1, 3, figsize=(figl*5, figl*2), sharex='row', sharey='row')
+    fig_1dca, ax_1dca = plt.subplots(1, 2, figsize=(figl*5, figl*2.5), sharex=True, sharey=True)
+    fig_2d, ax_2d = plt.subplots(2, 3, figsize=(figl*3, figl*2.75), sharex='row', sharey='row')
 
     ratiosimdict = dict()
     ratiodisimdict = dict()
     df_exin_dict = dict(ca=[], sim=[], exnum=[], innum=[])
 
-    print(expdf[~expdf['overlap_ratio'].isna()]['overlap_ratio'].abs().describe())
-
     ms = 1
     frac = 2
     for caid, (ca, cadf) in enumerate(expdf.groupby(by='ca')):
 
-        # cadf = cadf[(~cadf[ratio_key].isna()) & (~cadf[anglekey1].isna()) & (~cadf[anglekey2].isna()) & \
-        #             (cadf['numpass_at_precess1'] >= nap_thresh) & (cadf['numpass_at_precess2'] >= nap_thresh )
-        #             ].reset_index(drop=True)
         cadf = cadf[(~cadf[ratio_key].isna()) & (~cadf[anglekey1].isna()) & (~cadf[anglekey2].isna())].reset_index(drop=True)
 
         # oratio = cadf[ratio_key]
@@ -1496,28 +1445,27 @@ def plot_pairangle_similarity_analysis(expdf, save_dir=None, nap_thresh=1):
 
 
         # 2D scatter of ex-intrinsicitiy for similar/dissimlar (ax_2d)
-        chisq_exsim, p_exfracsim = chisquare([exnumsim, innumsim])
-        chisq_exdissim, p_exfracdisim = chisquare([exnumdisim, innumdisim])
-        stat_record(stat_fn, False, '1way chi, %s, similar, %d/%d=%0.2f, \chi^2(%d, N=%d)=%0.2f, p%s' % \
-                    (ca, exnumsim, orsim.shape[0], exnumsim/orsim.shape[0], 1, orsim.shape[0], chisq_exsim, p2str(p_exfracsim)))
-        stat_record(stat_fn, False, '1way shi, %s, dissimilar, %d/%d=%0.2f, \chi^2(%d, N=%d)$=%0.2f, p%s' % \
-                    (ca, exnumdisim, ordisim.shape[0], exnumdisim/ordisim.shape[0], 1, ordisim.shape[0], chisq_exdissim, p2str(p_exfracdisim)))
+        p_exfracsim, numsim, exfracsimtxt  = my_chi_1way([exnumsim, innumsim])
+        p_exfracdisim, numdisim, exfracdisimtxt  = my_chi_1way([exnumdisim, innumdisim])
+        stat_record(stat_fn, False, 'Similar ex-in ratio, %s, %d:%d=%0.2f, %s' % \
+                    (ca, exnumsim, innumsim, exnumsim/innumsim, exfracsimtxt))
+        stat_record(stat_fn, False, 'Dissimilar ex-in ratio, %s, %d:%d=%0.2f, %s' % \
+                    (ca, exnumdisim, innumdisim, exnumdisim/innumdisim, exfracdisimtxt))
 
         ax_2d[0, caid].scatter(ominus[simidx], oplus[simidx], s=ms, c=ca_c[ca], marker='.')
         ax_2d[0, caid].plot([0.3, 1], [0.3, 1], c='k', linewidth=0.75)
-        ax_2d[0, caid].annotate('%0.2f'%(exfracsim), xy=(0.05, 0.17), xycoords='axes fraction', size=legendsize, color='r')
-        ax_2d[0, caid].annotate('p%s'%(p2str(p_exfracsim)), xy=(0.05, 0.025), xycoords='axes fraction', size=legendsize)
+        ax_2d[0, caid].annotate('%0.2f'%(exnumsim/innumsim), xy=(0.015, 0.17), xycoords='axes fraction', size=legendsize, color='r')
+        ax_2d[0, caid].annotate('p=%s'%(p2str(p_exfracsim)), xy=(0.015, 0.025), xycoords='axes fraction', size=legendsize)
         ax_2d[0, caid].set_yticks([0, 1])
         ax_2d[0, caid].set_xlim(0, 1)
         ax_2d[0, caid].set_ylim(0, 1)
         ax_2d[0, caid].tick_params(axis='both', which='major', labelsize=ticksize)
-        ax_2d[0, caid].set_title(ca, fontsize=titlesize)
 
 
         ax_2d[1, caid].scatter(ominus[disimidx], oplus[disimidx], s=ms, c=ca_c[ca], marker='.')
         ax_2d[1, caid].plot([0.3, 1], [0.3, 1], c='k', linewidth=0.75)
-        ax_2d[1, caid].annotate('%0.2f'%(exfracdisim), xy=(0.05, 0.17), xycoords='axes fraction', size=legendsize, color='r')
-        ax_2d[1, caid].annotate('p%s'%(p2str(p_exfracdisim)), xy=(0.05, 0.025), xycoords='axes fraction', size=legendsize)
+        ax_2d[1, caid].annotate('%0.2f'%(exnumdisim/innumdisim), xy=(0.015, 0.17), xycoords='axes fraction', size=legendsize, color='r')
+        ax_2d[1, caid].annotate('p=%s'%(p2str(p_exfracdisim)), xy=(0.015, 0.025), xycoords='axes fraction', size=legendsize)
         ax_2d[1, caid].set_yticks([0, 1])
         ax_2d[1, caid].set_xlim(0, 1)
         ax_2d[1, caid].set_ylim(0, 1)
@@ -1533,17 +1481,20 @@ def plot_pairangle_similarity_analysis(expdf, save_dir=None, nap_thresh=1):
         df_exin_dict['exnum'].append(exnumdisim)
         df_exin_dict['innum'].append(innumdisim)
 
-    ax_2d[0, 1].set_xticks([0, 1])
-    ax_2d[0, 0].set_ylabel('Similar\nIntrinsicity', fontsize=fontsize)
+
+    ax_2d[0, 0].set_ylabel('Intrinsicity', fontsize=fontsize)
     ax_2d[0, 1].set_xlabel('\n', fontsize=fontsize)
-    ax_2d[1, 0].set_ylabel('Dissimilar\nIntrinsicity', fontsize=fontsize)
+    ax_2d[1, 0].set_ylabel('Intrinsicity', fontsize=fontsize)
     ax_2d[1, 1].set_xlabel('Extrinsicity', fontsize=fontsize)
-    for i in [0, 2]:
-        plt.setp(ax_2d[0, i].get_xticklabels(), visible=False)
-        plt.setp(ax_2d[1, i].get_xticklabels(), visible=False)
+    for i in range(3):
+        ax_2d[1, i].set_xticks([0, 1])
+
     for ax_each in ax_2d.ravel():
         ax_each.spines['top'].set_visible(False)
         ax_each.spines['right'].set_visible(False)
+    ax_2d[0, 1].set_title('Similar pairs', fontsize=titlesize)
+    ax_2d[1, 1].set_title('Dissimilar pairs', fontsize=titlesize)
+
 
     # 2-way chisquare for ex-in fraction
     df_exin = pd.DataFrame(df_exin_dict)
@@ -1552,225 +1503,660 @@ def plot_pairangle_similarity_analysis(expdf, save_dir=None, nap_thresh=1):
         dftmp = df_exin[df_exin['ca']==ca]
         dftmp.index = dftmp.sim
         dftmp = dftmp[['exnum', 'innum']]
+        sim_exnum, sim_innum = dftmp.loc['similar', ['exnum', 'innum']]
+        dissim_exnum, dissim_innum = dftmp.loc['dissimilar', ['exnum', 'innum']]
         allcadfexin.append(dftmp)
-        chitmp, pchitmp, doftmp, _ = chi2_contingency(dftmp)
-        pfisher = fisherexact(dftmp.to_numpy())
-        ntotal = dftmp['exnum'].sum() + dftmp['innum'].sum()
-        stattxt = '2-way, %s, sim vs dissim, \chi^2(%d, N=%d)}=%0.2f, p%s. Fisher exact p%s'
-        stat_record(stat_fn, False, stattxt % (ca, doftmp, ntotal, chitmp, p2str(pchitmp), p2str(pfisher)))
-    from statsmodels.stats.contingency_tables import StratifiedTable
-    statmodel_CA13table = StratifiedTable([allcadfexin[0], allcadfexin[2]])
+
+        pfisher, nsimdissim, fishertxt = my_fisher_2way(dftmp.to_numpy())
+        stattxt = 'Two-way, %s, similar=%d:%d=%0.2f, dissimilar=%d:%d=%0.2f, %s'
+        stat_record(stat_fn, False, stattxt % \
+                    (ca, sim_exnum, sim_innum, sim_exnum/sim_innum,
+                     dissim_exnum, dissim_innum, dissim_exnum/dissim_innum, fishertxt))
     table_allca = allcadfexin[0] + allcadfexin[1] + allcadfexin[2]
     simexn, dissimexn = table_allca.loc['similar', 'exnum'], table_allca.loc['dissimilar', 'exnum']
-    simtotaln, dissimtotaln = table_allca.sum(axis=1)
-    pfish_allca = fisherexact(table_allca.to_numpy())
-    stat_record(stat_fn, False, 'All brain sim (%d/%d) vs dissim (%d/%d) table Fisher exact p%s'%(simexn, simtotaln, dissimexn, dissimtotaln, p2str(pfish_allca)))
+    siminn, dissiminn = table_allca.loc['similar', 'innum'], table_allca.loc['dissimilar', 'innum']
+    pfisher_allca, _, fishertxt_allca = my_fisher_2way(np.array([[simexn, dissimexn], [siminn, dissiminn] ]))
+    stat_record(stat_fn, False, 'All CAs, similar=%d:%d=%0.2f, dissimilar=%d:%d=%0.2f, %s'%(
+        simexn, siminn, simexn/siminn, dissimexn, dissiminn, dissimexn/dissiminn, fishertxt_allca))
 
+    # Compare between sim and dissim across CAs
     for simidtmp, sim_label in enumerate(['similar', 'dissimilar']):
         for capairid, (calabel1, calabel2) in enumerate((('CA1', 'CA2'), ('CA2', 'CA3'), ('CA1', 'CA3'))):
             dftmp = df_exin[(df_exin['sim']==sim_label) &
                             ((df_exin['ca']==calabel1) | (df_exin['ca']==calabel2))][['exnum', 'innum']]
-            chitmp, pchitmp, doftmp, _ = chi2_contingency(dftmp)
-            ntotal = dftmp['exnum'].sum() + dftmp['innum'].sum()
-            pfisher = fisherexact(dftmp.to_numpy())
-            stattxt = '2-way, %s, %s vs %s, \chi^2(%d, n=%d)=%0.2f, p%s. Fisher exact p%s'
-            stat_record(stat_fn, False, stattxt % (sim_label, calabel1, calabel2, doftmp, ntotal, chitmp, p2str(pchitmp), p2str(pfisher)))
+            exnum, innum = dftmp['exnum'].sum(), dftmp['innum'].sum()
+            btwca_p, _, btwca_txt = my_fisher_2way(dftmp.to_numpy())
+            stattxt = 'Two-way, %s, %s vs %s, %d:%d=%0.2f, %s'
+            stat_record(stat_fn, False, stattxt % (sim_label, calabel1, calabel2, exnum, innum, exnum/innum, btwca_txt))
 
 
-    # Compare exin for CA1-3
-    nsim1, nsim2, nsim3 = ratiosimdict['CA1'].shape[0], ratiosimdict['CA2'].shape[0], ratiosimdict['CA3'].shape[0]
-    ndisim1, ndisim2, ndisim3 = ratiodisimdict['CA1'].shape[0], ratiodisimdict['CA2'].shape[0], ratiodisimdict['CA3'].shape[0]
-
-    zsim13, psim13 = ranksums(ratiosimdict['CA1'], ratiosimdict['CA3'])
-    zdisim13, pdisim13 = ranksums(ratiodisimdict['CA1'], ratiodisimdict['CA3'])
-    zsim23, psim23 = ranksums(ratiosimdict['CA2'], ratiosimdict['CA3'])
-    zdisim23, pdisim23 = ranksums(ratiodisimdict['CA2'], ratiodisimdict['CA3'])
-
-    ax_1dca[0].text(0.1, 0.2, 'p13rs=%0.4f\np23rs=%0.4ff' % (psim13, psim23), fontsize=legendsize)
-    ax_1dca[0].set_title('Similar', fontsize=fontsize)
-    ax_1dca[0].set_xlabel('Intrinsic <-> Extrinsic', fontsize=fontsize)
-    customlegend(ax_1dca[0], fontsize=legendsize)
-    ax_1dca[1].text(0.1, 0.2, 'p13rs=%0.4f\np23rs=%0.4f' % (pdisim13, pdisim13), fontsize=legendsize)
-    ax_1dca[1].set_title('Dissimilar', fontsize=fontsize)
-    ax_1dca[1].set_xlabel('Intrinsic <-> Extrinsic', fontsize=fontsize)
-    customlegend(ax_1dca[1], fontsize=legendsize)
-
-    stat_record(stat_fn, False, 'Extrinsicity bias, U Mann-Whiney U test, Similar, CA1 vs CA3, U(N_{CA1}=%d, N_{CA3}=%d)=%0.2f, p%s'% (nsim1, nsim3, zsim13, p2str(psim13)))
-    stat_record(stat_fn, False, 'Extrinsicity bias, U Mann-Whiney U test, Similar, CA2 vs CA3, U(N_{CA2}=%d, N_{CA3}=%d)=%0.2f, p%s'% (nsim2, nsim3, zsim23, p2str(psim23)))
-    stat_record(stat_fn, False, 'Extrinsicity bias, U Mann-Whiney U test, Dissimilar, CA1 vs CA3, U(N_{CA1}=%d, N_{CA3}=%d)=%0.2f, p%s'% (ndisim1, ndisim3, zdisim13, p2str(pdisim13)))
-    stat_record(stat_fn, False, 'Extrinsicity bias, U Mann-Whiney U test, Dissimilar, CA2 vs CA3, U(N_{CA2}=%d, N_{CA3}=%d)=%0.2f, p%s'% (ndisim2, ndisim3, zdisim23, p2str(pdisim23)))
-
-
-    stat_record(stat_fn, False, statmodel_CA13table.summary().as_text())
+    fig_2d.tight_layout()
 
 
     # Saving
-    fig_1d.tight_layout()
-    fig_1dca.tight_layout()
-    fig_2d.tight_layout()
-
     for figext in ['png', 'eps']:
-        fig_1d.savefig(join(save_dir, 'exp_simdissim_exintrinsic1d.%s'%(figext)), dpi=dpi)
-        fig_1dca.savefig(join(save_dir, 'exp_simdissim_exintrinsic1d_ca123.%s'%(figext)), dpi=dpi)
         fig_2d.savefig(join(save_dir, 'exp_simdissim_exintrinsic2d.%s'%(figext)), dpi=dpi)
 
 
-def FourCasesAnalysis(expdf, save_dir):
-    def flip_direction(direction):
-        if direction == "A->B":
-            return "B->A"
-        elif direction == "B->A":
-            return "A->B"
-        else:
-            return direction
-    nap_thresh = 1
-    frac_field = 2
-    frac_pass = 2
-    anglekey1, anglekey2 = 'rate_angle1', 'rate_angle2'
+def plot_intrinsic_precession_property(expdf, save_dir):
+    import warnings
+    warnings.filterwarnings("ignore")
+    # # ============================== Organize data =================================
+    pdf_dict = dict(pair_id=[], ca=[], overlap_ratio=[], lagAB=[], lagBA=[], onset=[], slope=[], direction=[], dsp=[],
+                    phasesp=[], precess_exist=[])
+
+    for i in range(expdf.shape[0]):
+
+        ca, overlap_ratio, lagAB, lagBA, passdf = expdf.loc[i, ['ca', 'overlap_ratio', 'phaselag_AB', 'phaselag_BA', 'precess_dfp']]
+        pair_id = expdf.loc[i, 'pair_id']
+
+        num_pass = passdf.shape[0]
+        for npass in range(num_pass):
+            onset1, slope1, onset2, slope2, direction = passdf.loc[npass, ['rcc_c1', 'rcc_m1', 'rcc_c2', 'rcc_m2', 'direction']]
+
+            dsp1, dsp2, phasesp1, phasesp2 = passdf.loc[npass, ['dsp1', 'dsp2', 'phasesp1', 'phasesp2']]
+            precess_exist1, precess_exist2 = passdf.loc[npass, ['precess_exist1', 'precess_exist2']]
+
+            pdf_dict['pair_id'].extend([pair_id]*2)
+            pdf_dict['ca'].extend([ca]*2)
+            pdf_dict['overlap_ratio'].extend([overlap_ratio]*2)
+            pdf_dict['lagAB'].extend([lagAB]*2)
+            pdf_dict['lagBA'].extend([lagBA]*2)
+            pdf_dict['onset'].extend([onset1, onset2])
+            pdf_dict['slope'].extend([slope1, slope2])
+            pdf_dict['direction'].extend([direction]*2)
+            pdf_dict['precess_exist'].extend([precess_exist1, precess_exist2])
+
+            pdf_dict['dsp'].append(dsp1)
+            pdf_dict['dsp'].append(dsp2)
+
+            pdf_dict['phasesp'].append(phasesp1)
+            pdf_dict['phasesp'].append(phasesp2)
+
+    pdf = pd.DataFrame(pdf_dict)
+    pdf = pdf[pdf['slope'].abs() < 1.9].reset_index(drop=True)
+    preferAB_mask = (pdf['overlap_ratio'] < 0) & (pdf['lagAB'] > 0) & (pdf['lagBA'] > 0) & (pdf['direction']=='A->B')
+    nonpreferAB_mask = (pdf['overlap_ratio'] < 0) & (pdf['lagAB'] < 0) & (pdf['lagBA'] < 0) & (pdf['direction']=='A->B')
+    preferBA_mask = (pdf['overlap_ratio'] < 0) & (pdf['lagAB'] < 0) & (pdf['lagBA'] < 0) & (pdf['direction']=='B->A')
+    nonpreferBA_mask = (pdf['overlap_ratio'] < 0) & (pdf['lagAB'] > 0) & (pdf['lagBA'] > 0) & (pdf['direction']=='B->A')
+    prefer_pdf = pdf[preferAB_mask | preferBA_mask].reset_index(drop=True)
+    nonprefer_pdf = pdf[nonpreferAB_mask | nonpreferBA_mask].reset_index(drop=True)
+
+
+    # # ============================== Functions =================================
+
+    def plot_exin_correlograms(ax, binsAB, binsBA, edm):
+
+        edm_width = edm[1] - edm[0]
+        binsABnorm, binsBAnorm = binsAB / binsAB.sum(), binsBA / binsBA.sum()
+
+        ax.bar(edm, binsABnorm, width=edm_width, color='tan', label=r'$A\rightarrow B$')
+        ax.bar(edm, binsBAnorm, width=edm_width, color='slategray', label=r'$B\rightarrow A$')
+        customlegend(ax, fontsize=legendsize, bbox_to_anchor=(-0.5, 0.2), loc='lower left')
+
+        ax.set_xticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15])
+        ax.set_xticklabels(['', '-0.1', '', '0', '', '0.1', ''])
+        ax.set_xlabel('Time lag (s)', fontsize=legendsize)
+        ax.set_yticks([])
+        ax.spines['left'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.tick_params(axis='both', which='major', labelsize=ticksize)
+
+    def plot_intrinsic_direction_illustration(ax, expdf, pair_id, pre_c, in_direction):
+        color_A, color_B = 'turquoise', 'purple'
+
+        i = expdf[expdf['pair_id']==pair_id].index[0]
+        pass_dfp = expdf.loc[i, 'precess_dfp']
+        pair_id, xyval1, xyval2 = expdf.loc[i, ['pair_id', 'xyval1', 'xyval2']]
+        fieldcoor1, fieldcoor2 = expdf.loc[pair_id, ['com1', 'com2']]
+        corrAB, corrBA, inval, exval = expdf.loc[i, ['corr_info_AB', 'corr_info_BA', 'overlap_plus', 'overlap_minus']]
+        ABpass_dfp = pass_dfp[pass_dfp['direction']=='A->B'].reset_index(drop=True)
+        BApass_dfp = pass_dfp[pass_dfp['direction']=='B->A'].reset_index(drop=True)
+
+        # Correlation information - ax[0]
+        binsAB, edges = corrAB[0], corrAB[1]
+        binsBA, _ = corrBA[0], corrBA[1]
+        edm = midedges(edges)
+        binsABnorm, binsBAnorm = binsAB / binsAB.sum(), binsBA / binsBA.sum()
+        plot_exin_correlograms(ax[0], binsAB, binsBA, edm)
+
+
+        # Plot AB passes - ax[1]
+        pass_color = pre_c['prefer'] if in_direction == 'A->B' else pre_c['nonprefer']
+        ax[1].plot(xyval1[:, 0], xyval1[:, 1], c=color_A, label='A')
+        ax[1].plot(xyval2[:, 0], xyval2[:, 1], c=color_B, label='B')
+        ax[1].scatter(fieldcoor1[0], fieldcoor1[1], c=color_A, marker='^', s=8, zorder=3.1)
+        ax[1].scatter(fieldcoor2[0], fieldcoor2[1], c=color_B, marker='^', s=8, zorder=3.1)
+        for j in range(ABpass_dfp.shape[0]):
+            x, y = ABpass_dfp.loc[j, ['x', 'y']]
+            ax[1].plot(x, y, c=pass_color)
+            ax[1].plot(x[0], y[0], c='k', marker='x')
+        customlegend(ax[1], fontsize=legendsize, bbox_to_anchor=(0.9, 0.7), loc='lower left')
+        ax[1].axis('off')
+
+
+        # Plot BA passes - ax[2]
+        pass_color = pre_c['prefer'] if in_direction == 'B->A' else pre_c['nonprefer']
+        ax[2].plot(xyval1[:, 0], xyval1[:, 1], c=color_A)
+        ax[2].plot(xyval2[:, 0], xyval2[:, 1], c=color_B)
+        ax[2].scatter(fieldcoor1[0], fieldcoor1[1], c=color_A, marker='^', s=8, zorder=3.1)
+        ax[2].scatter(fieldcoor2[0], fieldcoor2[1], c=color_B, marker='^', s=8, zorder=3.1)
+        for j in range(BApass_dfp.shape[0]):
+            x, y = BApass_dfp.loc[j, ['x', 'y']]
+            ax[2].plot(x, y, c=pass_color)
+            ax[2].plot(x[0], y[0], c='k', marker='x')
+        ax[2].axis('off')
+
+
+    def plot_prefer_nonprefer(ax, prefer_pdf, nonprefer_pdf, pre_c, stat_fn):
+        '''
+
+        Parameters
+        ----------
+        ax: ndarray
+            Numpy array of axes objects with shape (6, ).
+            ax[0] - Fraction of negative slope
+            ax[1] - Prefer's precession
+            ax[2] - Nonprefer's precession
+            ax[3] - 2D scatter of onset vs slope for Prefer and Nonprefer
+            ax[4] - Difference in phases for Prefer and Nonprefer
+
+        prefer_pdf: dataframe
+            Pandas dataframe containing prefered passes (including non-precessing)
+        nonprefer_pdf: dataframe
+            Pandas dataframe containing nonprefered passes (including non-precessing)
+
+        Returns
+        -------
+        '''
+        precess_ms = 1
+        prefer_allslope = prefer_pdf['slope'].to_numpy()
+        nonprefer_allslope = nonprefer_pdf['slope'].to_numpy()
+        prefer_slope = prefer_pdf[prefer_pdf['precess_exist']]['slope'].to_numpy() * np.pi
+        nonprefer_slope = nonprefer_pdf[nonprefer_pdf['precess_exist']]['slope'].to_numpy() * np.pi
+        prefer_onset = prefer_pdf[prefer_pdf['precess_exist']]['onset'].to_numpy()
+        nonprefer_onset = nonprefer_pdf[nonprefer_pdf['precess_exist']]['onset'].to_numpy()
+        prefer_dsp = np.concatenate(prefer_pdf[prefer_pdf['precess_exist']]['dsp'].to_list())
+        nonprefer_dsp = np.concatenate(nonprefer_pdf[nonprefer_pdf['precess_exist']]['dsp'].to_list())
+        prefer_phasesp = np.concatenate(prefer_pdf[prefer_pdf['precess_exist']]['phasesp'].to_list())
+        nonprefer_phasesp = np.concatenate(nonprefer_pdf[nonprefer_pdf['precess_exist']]['phasesp'].to_list())
+
+
+        # Precession fraction
+        prefer_neg_n, prefer_pos_n = (prefer_allslope<0).sum(), (prefer_allslope>0).sum()
+        nonprefer_neg_n, nonprefer_pos_n = (nonprefer_allslope<0).sum(), (nonprefer_allslope>0).sum()
+        table_arr = np.array([[prefer_neg_n, prefer_pos_n], [nonprefer_neg_n, nonprefer_pos_n] ])
+        table_df = pd.DataFrame(table_arr, columns=['-ve', '+ve'], index=['Prefer', 'Nonprefer'])
+        fishfrac_p, ntotalprecess, fishfrac_text= my_fisher_2way(table_arr)
+        prefer_frac = prefer_neg_n/(prefer_pos_n+prefer_neg_n)
+        nonprefer_frac = nonprefer_neg_n/(nonprefer_pos_n+nonprefer_neg_n)
+        bar_w, bar_x, bar_y = 0.5, np.array([0, 1]), np.array([prefer_frac, nonprefer_frac])
+        ax[0].bar(bar_x, bar_y, width=bar_w, color=[pre_c['prefer'], pre_c['nonprefer']])
+        ax[0].errorbar(x=bar_x.mean(), y=0.85, xerr=0.5, c='k', capsize=2.5)
+        ax[0].text(x=0, y=0.92, s='p=%s'%(p2str(fishfrac_p)), fontsize=legendsize)
+        ax[0].set_xticks([0, 1])
+        ax[0].set_xticklabels(['Same', 'Opp'])
+        ax[0].set_yticks([0, 0.5, 1])
+        ax[0].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+        ax[0].set_ylim(0, 1.1)
+        ax[0].set_yticklabels(['0', '', '1'])
+        ax[0].set_ylabel('Precession\nfraction', fontsize=legendsize)
+        stat_record(stat_fn, False, 'Precess fraction\n'+table_df.to_string()+'\n%s'%(fishfrac_text))
+
+        # Prefer precession
+        xdum = np.linspace(0, 1, 10)
+        mean_phasesp1 = circmean(prefer_phasesp)
+        combined_slope, combined_onset = np.median(prefer_slope), circmean(prefer_onset)
+        ydum1 = combined_onset + xdum * combined_slope
+        ax[1].scatter(prefer_dsp, prefer_phasesp, marker='.', c=pre_c['prefer'], s=precess_ms)
+        ax[1].scatter(prefer_dsp, prefer_phasesp + 2*np.pi, marker='.', c=pre_c['prefer'], s=precess_ms)
+        ax[1].plot(xdum, ydum1, c='k')
+        ax[1].plot(xdum, ydum1+2*np.pi, c='k')
+        ax[1].plot(xdum, ydum1+2*np.pi, c='k')
+        ax[1].axhline(mean_phasesp1, xmin=0, xmax=0.2, color='k')
+        ax[1].set_xticks([0, 0.5, 1])
+        ax[1].set_xticklabels(['0', '', '1'])
+        ax[1].set_xlabel('Position', fontsize=legendsize, labelpad=-5)
+        ax[1].set_xlim(0, 1)
+        ax[1].set_yticks([0, np.pi])
+        ax[1].set_yticklabels(['0', '$\pi$'])
+        ax[1].set_ylim(-np.pi+(np.pi/2), np.pi+(np.pi/2))
+        ax[1].set_ylabel('Phase (rad)', fontsize=legendsize)
+
+        # Non-Prefer precession
+        xdum = np.linspace(0, 1, 10)
+        mean_phasesp2 = circmean(nonprefer_phasesp)
+        combined_slope, combined_onset = np.median(nonprefer_slope), circmean(nonprefer_onset)
+        ydum2 = combined_onset + xdum * combined_slope
+        ax[2].scatter(nonprefer_dsp, nonprefer_phasesp, marker='.', c=pre_c['nonprefer'], s=precess_ms)
+        ax[2].scatter(nonprefer_dsp, nonprefer_phasesp + 2*np.pi, marker='.', c=pre_c['nonprefer'], s=precess_ms)
+        ax[2].plot(xdum, ydum2, c='k')
+        ax[2].plot(xdum, ydum2+2*np.pi, c='k')
+        ax[2].plot(xdum, ydum2+2*np.pi, c='k')
+        ax[2].axhline(mean_phasesp2, xmin=0, xmax=0.2, color='k')
+        ax[2].plot(xdum, ydum1, c='k', linestyle='dotted')
+        ax[2].plot(xdum, ydum1+2*np.pi, c='k', linestyle='dotted')
+        ax[2].plot(xdum, ydum1+2*np.pi, c='k', linestyle='dotted')
+        ax[2].axhline(mean_phasesp1, xmin=0, xmax=0.2, color='k', linestyle='dotted')
+        ax[2].set_xticks([0, 0.5, 1])
+        ax[2].set_xticklabels(['0', '', '1'])
+        ax[2].set_xlabel('Position', fontsize=legendsize, labelpad=-10)
+        ax[2].set_xlim(0, 1)
+        ax[2].set_yticks([0, np.pi])
+        ax[2].set_yticklabels(['0', '$\pi$'])
+        ax[2].set_ylim(-np.pi+(np.pi/2), np.pi+(np.pi/2))
+        ax[2].set_ylabel('Phase (rad)', fontsize=legendsize)
+
+        # Onset
+        p_onset, _, _ , ww_onset_txt = my_ww_2samp(prefer_onset, nonprefer_onset, 'Same', 'Opp')
+        onset_bins = np.linspace(0, 2*np.pi, 20)
+        prefer_onsetbins, _ = np.histogram(prefer_onset, bins=onset_bins)
+        nonprefer_onsetbins, _ = np.histogram(nonprefer_onset, bins=onset_bins)
+        ax[3].plot(onset_bins[:-1], np.cumsum(prefer_onsetbins)/prefer_onsetbins.sum(), c=pre_c['prefer'], label='prefer')
+        ax[3].plot(onset_bins[:-1], np.cumsum(nonprefer_onsetbins)/nonprefer_onsetbins.sum(), c=pre_c['nonprefer'], label='nonprefer')
+        ax[3].annotate('p=%s'%(p2str(p_onset)), xy=(0.3, 0.05), xycoords='axes fraction', fontsize=legendsize)
+        ax[3].set_xticks([0, np.pi, 2*np.pi])
+        ax[3].set_xticklabels(['0', '', '$2\pi$'])
+        ax[3].set_xlabel('Onset\n(rad)', fontsize=legendsize, labelpad=-10)
+        ax[3].set_yticks([0, 0.5, 1])
+        ax[3].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+        ax[3].set_yticklabels(['0', '', '1'])
+        ax[3].set_ylabel('Cumulative\ndensity', fontsize=legendsize)
+        stat_record(stat_fn, False, 'Onset difference, %s'%(ww_onset_txt))
+
+        # Slope
+        p_slope, _, _, slope_rs_text = my_kruskal_2samp(prefer_slope, nonprefer_slope, 'Same', 'Opp')
+        slope_bins = np.linspace(-2*np.pi, 0, 20)
+        prefer_slopebins, _ = np.histogram(prefer_slope, bins=slope_bins)
+        nonprefer_slopebins, _ = np.histogram(nonprefer_slope, bins=slope_bins)
+        ax[4].plot(slope_bins[:-1], np.cumsum(prefer_slopebins)/prefer_slopebins.sum(), c=pre_c['prefer'], label='prefer')
+        ax[4].plot(slope_bins[:-1], np.cumsum(nonprefer_slopebins)/nonprefer_slopebins.sum(), c=pre_c['nonprefer'], label='nonprefer')
+        ax[4].annotate('p=%s'%(p2str(p_slope)), xy=(0.3, 0.05), xycoords='axes fraction', fontsize=legendsize)
+        ax[4].set_xticks([-2*np.pi, -np.pi, 0])
+        ax[4].set_xticklabels(['$-2\pi$', '', '0'])
+        ax[4].set_xlabel('Slope\n(rad)', fontsize=legendsize, labelpad=-10)
+        ax[4].set_yticks([0, 0.5, 1])
+        ax[4].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+        ax[4].set_yticklabels(['0', '', '1'])
+        ax[4].set_ylabel('Cumulative\ndensity', fontsize=legendsize)
+        stat_record(stat_fn, False, 'Slope difference, %s'%(slope_rs_text))
+
+
+        # Spike phase
+        prefer_phasesp_mean, nonprefer_phasesp_mean = circmean(prefer_phasesp), circmean(nonprefer_phasesp)
+        p_phasesp, _, _, ww_phasesp_txt = my_ww_2samp(prefer_phasesp, nonprefer_phasesp, 'Same', 'Opp')
+        phasesp_bins = np.linspace(-np.pi, np.pi, 20)
+        prefer_phasespbins, _ = np.histogram(prefer_phasesp, bins=phasesp_bins)
+        nonprefer_phasespbins, _ = np.histogram(nonprefer_phasesp, bins=phasesp_bins)
+        norm_preferphasebins = prefer_phasespbins/prefer_phasespbins.sum()
+        norm_nonpreferphasebins = nonprefer_phasespbins/nonprefer_phasespbins.sum()
+        maxl = max(norm_preferphasebins.max(), norm_nonpreferphasebins.max())
+        ax[5].step(midedges(phasesp_bins), norm_preferphasebins, color=pre_c['prefer'], label='prefer')
+        ax[5].step(midedges(phasesp_bins), norm_nonpreferphasebins, color=pre_c['nonprefer'], label='nonprefer')
+        ax[5].axvline(prefer_phasesp_mean, ymin=0.8, ymax=1, color=pre_c['prefer'], lw=1)
+        ax[5].axvline(nonprefer_phasesp_mean, ymin=0.8, ymax=1, color=pre_c['nonprefer'], lw=1)
+        ax[5].annotate('p=%s'%(p2str(p_phasesp)), xy=(0.2, 0.05), xycoords='axes fraction', fontsize=legendsize)
+        ax[5].set_xticks([-np.pi, 0, np.pi])
+        ax[5].set_xticklabels(['$-\pi$', '', '$\pi$'])
+        ax[5].set_xlabel('Phase\n(rad)', fontsize=legendsize, labelpad=-10)
+        ax[5].set_yticks([0, 0.10])
+        ax[5].set_yticklabels(['0', '1'])
+        ax[5].set_ylim(0, 0.12)
+        ax[5].set_ylabel('Density', fontsize=legendsize)
+        stat_record(stat_fn, False, 'Phase difference, %s'%(ww_phasesp_txt))
+
+
+        # ALL
+        for ax_each in ax:
+            ax_each.tick_params(labelsize=ticksize)
+            ax_each.spines['right'].set_visible(False)
+            ax_each.spines['top'].set_visible(False)
+
+        return ax
+
+    def compare_to_extrinsic(expdf, stat_fn):
+        from pycircstat.descriptive import std
+        stat_record(stat_fn, False, '========= Ex-In comparison==========')
+        for caid, (ca, cadf) in enumerate(expdf.groupby('ca')):
+            ex_capdf = pd.concat(cadf[cadf['overlap_ratio'] > 0]['precess_dfp'].to_list(), axis=0, ignore_index=True)
+            in_capdf = pd.concat(cadf[cadf['overlap_ratio'] < 0]['precess_dfp'].to_list(), axis=0, ignore_index=True)
+            ex_phasesp = np.concatenate(ex_capdf[ex_capdf.precess_exist]['phasesp1'].to_list() + ex_capdf[ex_capdf.precess_exist]['phasesp2'].to_list())
+            in_phasesp = np.concatenate(in_capdf[in_capdf.precess_exist]['phasesp1'].to_list() + in_capdf[in_capdf.precess_exist]['phasesp2'].to_list())
+
+            pww, _, exin_descrips, ww_exin_txt = my_ww_2samp(ex_phasesp, in_phasesp, 'Ex', 'In')
+            (exmean, exsem), (inmean, insem) = exin_descrips
+            stat_record(stat_fn, False, '%s, spike phase difference, Ex ($%0.2f \pm %0.4f$) vs In ($%0.2f \pm %0.4f$), %s'%(ca, exmean, exsem, inmean, insem, ww_exin_txt))
 
 
 
+    # # ============================== Plotting =================================
+    pre_c = dict(prefer='rosybrown', nonprefer='lightsteelblue')
+    fig = plt.figure(figsize=(total_figw, total_figw))
 
-    df = expdf[(~expdf[anglekey1].isna()) & (~expdf[anglekey2].isna()) & \
-               #            ((expdf['numpass_at_precess1'] >= nap_thresh) & (expdf['numpass_at_precess2'] >= nap_thresh)) & \
-               (~expdf['overlap_ratio'].isna())
-               ].reset_index(drop=True)
+    corr_w, stat_w = 0.4, 0.6
 
-    df['fanglediff'] = np.abs(cdiff(df[anglekey1].to_numpy(), df[anglekey2].to_numpy()))
-    df['meanfangle'] = shiftcyc_full2half(circmean(df[[anglekey1, anglekey2]].to_numpy(), axis=1))
+    # Intrinsic A->B Example
+    xoffset, yoffset = 0, -0.06
+    squeezex_corr, squeezey_corr = 0.025, 0.1
+    yoffset_corr = squeezey_corr/2
+    squeezex_pair, squeezey_pair = 0.05, 0.07
+    yoffset_pair = 0.025
+    xgap_btwpair = 0.01
+    corrAB_w, corrAB_h = corr_w/2, corr_w/2
+    pairAB_y = 1 - corrAB_h + yoffset
+    corrAB_y = 1 - corrAB_h*2 + yoffset
+    ax_corrAB = [
+        fig.add_axes([0 + xoffset + corrAB_w/2 + squeezex_corr/2, pairAB_y + squeezey_corr/2 + yoffset_corr,
+                      corrAB_w-squeezex_corr, corrAB_h-squeezey_corr]),
+        fig.add_axes([0 + xoffset + squeezex_pair/2 + xgap_btwpair, corrAB_y + yoffset_pair + squeezey_pair/2,
+                      corrAB_w-squeezex_pair, corrAB_h-squeezey_pair]),
+        fig.add_axes([0 + xoffset + corrAB_w + squeezex_pair/2 - xgap_btwpair, corrAB_y + yoffset_pair + squeezey_pair/2,
+                      corrAB_w-squeezex_pair, corrAB_h-squeezey_pair]),
+    ]
 
-
-    allprecessdf_dict = dict(ca=[], pair_id=[], foverlap=[], overlap_ratio=[], fanglediff=[], meanfangle=[],
-                             pairlagAB=[], pairlagBA=[], fangle1=[], fangle2=[],
-                             passangle=[], nspikes=[], onset=[], slope=[], direction=[], precess_exist=[],
-
-                             )
-
-
-    for i in range(df.shape[0]):
-
-        ca, pair_id, overlap_r, fad, mfa = df.loc[i, ['ca', 'pair_id', 'overlap_ratio', 'fanglediff', 'meanfangle']]
-        foverlap = df.loc[i, 'overlap']
-        precess_dfp = df.loc[i, 'precess_dfp']
-
-        numprecess = precess_dfp.shape[0]
-        if numprecess < 1:
-            continue
-
-        nspikes1 = precess_dfp['tsp1'].apply(lambda x : x.shape[0])
-        nspikes2 = precess_dfp['tsp2'].apply(lambda x : x.shape[0])
-
-        pos1, pos2 = df.loc[i, ['fieldcoor1', 'fieldcoor2']]
-        posdiff = pos2 - pos1
-        field_orient = np.angle(posdiff[0] + 1j * posdiff[1])
-        absdiff = np.abs(cdiff(field_orient, mfa))
-        ABalign = True if absdiff < np.pi/2 else False
-
-        lagABtmp, lagBAtmp = df.loc[i, ['phaselag_AB', 'phaselag_BA']]
-        angle1, angle2 = df.loc[i, [anglekey1, anglekey2]]
-
-        allprecessdf_dict['ca'].extend([ca] * numprecess * 2)
-        allprecessdf_dict['pair_id'].extend([pair_id] * numprecess * 2)
-        allprecessdf_dict['foverlap'].extend([foverlap] * numprecess * 2)
-        allprecessdf_dict['overlap_ratio'].extend([overlap_r] * numprecess * 2)
-        allprecessdf_dict['fanglediff'].extend([fad] * numprecess * 2)
-        allprecessdf_dict['meanfangle'].extend([mfa] * numprecess * 2)
-        allprecessdf_dict['fangle1'].extend([angle1] * numprecess * 2)
-        allprecessdf_dict['fangle2'].extend([angle2] * numprecess * 2)
-
-        allprecessdf_dict['precess_exist'].extend(precess_dfp['precess_exist'].to_list() * 2)
-
-        # Flipping AB if field A and field
-        if ABalign:
-            allprecessdf_dict['pairlagAB'].extend([lagABtmp] * numprecess * 2)
-            allprecessdf_dict['pairlagBA'].extend([lagBAtmp] * numprecess * 2)
-            allprecessdf_dict['direction'].extend(precess_dfp['direction'].to_list() * 2)
-            allprecessdf_dict['onset'].extend(precess_dfp['rcc_c1'].to_list() + precess_dfp['rcc_c2'].to_list())
-            allprecessdf_dict['slope'].extend(precess_dfp['rcc_m1'].to_list() + precess_dfp['rcc_m2'].to_list())
-            allprecessdf_dict['passangle'].extend(precess_dfp['mean_anglesp1'].to_list() + precess_dfp['mean_anglesp2'].to_list())
-            allprecessdf_dict['nspikes'].extend(nspikes1.to_list() + nspikes2.to_list())
-            # allprecessdf_dict['precess_exist'].extend(precess_dfp['precess_exist1'].to_list() + precess_dfp['precess_exist2'].to_list())
-        else:
-            allprecessdf_dict['pairlagAB'].extend([-lagBAtmp] * numprecess * 2)
-            allprecessdf_dict['pairlagBA'].extend([-lagABtmp] * numprecess * 2)
-            allprecessdf_dict['direction'].extend(precess_dfp['direction'].apply(flip_direction).to_list() * 2)
-            allprecessdf_dict['onset'].extend(precess_dfp['rcc_c2'].to_list() + precess_dfp['rcc_c1'].to_list())
-            allprecessdf_dict['slope'].extend(precess_dfp['rcc_m2'].to_list() + precess_dfp['rcc_m1'].to_list())
-            allprecessdf_dict['passangle'].extend(precess_dfp['mean_anglesp2'].to_list() + precess_dfp['mean_anglesp1'].to_list())
-            allprecessdf_dict['nspikes'].extend(nspikes2.to_list() + nspikes1.to_list())
-            # allprecessdf_dict['precess_exist'].extend(precess_dfp['precess_exist2'].to_list() + precess_dfp['precess_exist1'].to_list())
-
-    allpdf = pd.DataFrame(allprecessdf_dict)
-    allpdf = allpdf[allpdf['precess_exist']].reset_index(drop=True)
-
-    # Case 1 & 2
-    allpdf['simfield'] = allpdf['fanglediff'] < (np.pi/frac_field)
-    allpdf['oppfield'] = allpdf['fanglediff'] > (np.pi - np.pi/frac_field)
-    passfield_adiff = np.abs(cdiff(allpdf['passangle'], allpdf['meanfangle']))
-    allpdf['case1'] = (passfield_adiff < (np.pi/frac_pass)) & allpdf['simfield']
-    allpdf['case2'] = (passfield_adiff > (np.pi - np.pi/frac_pass)) & allpdf['simfield']
-
-    # Case 3 & 4
-    diff1tmp = np.abs(cdiff(allpdf['passangle'], allpdf['fangle1']))
-    diff2tmp = np.abs(cdiff(allpdf['passangle'], allpdf['fangle2']))
-    simto1_AtoB = (diff1tmp < diff2tmp) & (diff1tmp < (np.pi/2)) & (allpdf['direction'] == 'A->B') & allpdf['oppfield']
-    simto1_BtoA = (diff1tmp >= diff2tmp) & (diff2tmp < (np.pi/2)) & (allpdf['direction'] == 'B->A') & allpdf['oppfield']
-    simto2_AtoB = (diff1tmp >= diff2tmp) & (diff2tmp < (np.pi/2)) & (allpdf['direction'] == 'A->B') & allpdf['oppfield']
-    simto2_BtoA = (diff1tmp < diff2tmp) & (diff1tmp < (np.pi/2)) & (allpdf['direction'] == 'B->A') & allpdf['oppfield']
-    allpdf['case3'] = simto1_AtoB | simto1_BtoA
-    allpdf['case4'] = simto2_AtoB | simto2_BtoA
-
-    # marmask = (allpdf['overlap_ratio'] < -exin_margin) | (allpdf['overlap_ratio'] > exin_margin)
-    # allpdf = allpdf[marmask].reset_index(drop=True)
+    # Intrinsic B->A Example
+    xoffset, yoffset = 0, -0.15
+    squeezex_corr, squeezey_corr = 0.025, 0.1
+    yoffset_corr = squeezey_corr/2
+    squeezex_pair, squeezey_pair = 0.05, 0.07
+    yoffset_pair = 0.025
+    xgap_btwpair = 0.01
+    corrBA_w, corrBA_h = corr_w/2, corr_w/2
+    pairBA_y = 1 - corrBA_h * 3 + yoffset
+    corrBA_y = 1 - corrBA_h * 4 + yoffset
+    ax_corrBA = [
+        fig.add_axes([0 + xoffset + corrBA_w/2 + squeezex_corr/2, pairBA_y + squeezey_corr/2 + yoffset_corr,
+                      corrBA_w-squeezex_corr, corrBA_h-squeezey_corr]),
+        fig.add_axes([0 + xoffset + squeezex_pair/2 + xgap_btwpair, corrBA_y + yoffset_pair + squeezey_pair/2,
+                      corrBA_w-squeezex_pair, corrBA_h-squeezey_pair]),
+        fig.add_axes([0 + xoffset + corrBA_w + squeezex_pair/2 - xgap_btwpair, corrBA_y + yoffset_pair + squeezey_pair/2,
+                      corrBA_w-squeezex_pair, corrBA_h-squeezey_pair]),
+    ]
 
 
-    # exin df
-    df_exin_dict = dict(nex=[], nin=[], ca=[], case=[])
+    # Params for CA1-CA3 columns
+    xoffset, yoffset = 0.025, -0.01
+    xgap_btwCAs = 0.015  # squeeze
+    ygap_btwPrecess = 0.015  # squeeze
+    ysqueeze_OS = 0.025  # for onset and slope, ax[3], ax[4]
+    yoffset_each = [0, 0, 0.03, 0.04, 0.06, 0.05]
 
-    for caid, (ca, capdf) in enumerate(allpdf.groupby('ca')):
+    # CA1 column
+    ca1_w, ca1_h = stat_w/3, 1/6
+    ca1_x = corr_w
+    squeezex, squeezey = 0.04, 0.05
 
+    ax_ca1 = [fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h)+squeezey/2+yoffset+yoffset_each[0], ca1_w-squeezex, ca1_h-squeezey]),
+              fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h*2)+squeezey/2+yoffset+yoffset_each[1], ca1_w-squeezex, ca1_h-squeezey]),
+              fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h*3)+squeezey/2+yoffset+yoffset_each[2], ca1_w-squeezex, ca1_h-squeezey]),
+              fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h*4)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[3], ca1_w-squeezex, ca1_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h*5)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[4], ca1_w-squeezex, ca1_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca1_x+squeezex/2+xoffset+xgap_btwCAs, (1-ca1_h*6)+squeezey/2+yoffset+yoffset_each[5], ca1_w-squeezex, ca1_h-squeezey]),
+              ]
 
+    # CA2 column
+    ca2_w, ca2_h = stat_w/3, 1/6
+    ca2_x = corr_w + ca1_w
+    squeezex, squeezey = 0.05, 0.05
+    ax_ca2 = [fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h)+squeezey/2+yoffset+yoffset_each[0], ca2_w-squeezex, ca2_h-squeezey]),
+              fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h*2)+squeezey/2+yoffset+yoffset_each[1], ca2_w-squeezex, ca2_h-squeezey]),
+              fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h*3)+squeezey/2+yoffset+yoffset_each[2], ca2_w-squeezex, ca2_h-squeezey]),
+              fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h*4)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[3], ca2_w-squeezex, ca2_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h*5)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[4], ca2_w-squeezex, ca2_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca2_x+squeezex/2+xoffset, (1-ca2_h*6)+squeezey/2+yoffset+yoffset_each[5], ca2_w-squeezex, ca2_h-squeezey]),
+              ]
 
-        # Onset per CA
-        case1df = capdf[capdf['case1']].reset_index(drop=True)
-        case2df = capdf[capdf['case2']].reset_index(drop=True)
-        case3df = capdf[capdf['case3']].reset_index(drop=True)
-        case4df = capdf[capdf['case4']].reset_index(drop=True)
+    # CA2 column
+    ca3_w, ca3_h = stat_w/3, 1/6
+    ca3_x = corr_w + ca1_w + ca2_w
+    squeezex, squeezey = 0.05, 0.05
+    ax_ca3 = [fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h)+squeezey/2+yoffset+yoffset_each[0], ca3_w-squeezex, ca3_h-squeezey]),
+              fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h*2)+squeezey/2+yoffset+yoffset_each[1], ca3_w-squeezex, ca3_h-squeezey]),
+              fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h*3)+squeezey/2+yoffset+yoffset_each[2], ca3_w-squeezex, ca3_h-squeezey]),
+              fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h*4)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[3], ca3_w-squeezex, ca3_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h*5)+squeezey/2+yoffset+ysqueeze_OS/2+yoffset_each[4], ca3_w-squeezex, ca3_h-squeezey-ysqueeze_OS]),
+              fig.add_axes([ca3_x+squeezex/2+xoffset-xgap_btwCAs, (1-ca3_h*6)+squeezey/2+yoffset+yoffset_each[5], ca3_w-squeezex, ca3_h-squeezey]),
+              ]
 
-        # Ex-/intrinsic numbers per CA
-        case1udf = case1df.drop_duplicates(subset=['pair_id'])
-        case2udf = case2df.drop_duplicates(subset=['pair_id'])
-        case3udf = case3df.drop_duplicates(subset=['pair_id'])
-        case4udf = case4df.drop_duplicates(subset=['pair_id'])
+    ax = [ax_ca1, ax_ca2, ax_ca3]
 
-        nex1, nin1 = (case1udf['overlap_ratio'] > 0).sum(), (case1udf['overlap_ratio'] <= 0).sum()
-        nex2, nin2 = (case2udf['overlap_ratio'] > 0).sum(), (case2udf['overlap_ratio'] <= 0).sum()
-        nex3, nin3 = (case3udf['overlap_ratio'] > 0).sum(), (case3udf['overlap_ratio'] <= 0).sum()
-        nex4, nin4 = (case4udf['overlap_ratio'] > 0).sum(), (case4udf['overlap_ratio'] <= 0).sum()
-        df_exin_dict['ca'].extend([ca] * 4)
-        df_exin_dict['case'].extend([1, 2, 3, 4])
-        df_exin_dict['nex'].extend(([nex1, nex2, nex3, nex4]))
-        df_exin_dict['nin'].extend(([nin1, nin2, nin3, nin4]))
-    df_exin = pd.DataFrame(df_exin_dict)
-    df_exin.index = df_exin.case
-    getcadf = lambda x, ca : x[x['ca']==ca][['nex', 'nin']]
-    df_total = getcadf(df_exin, 'CA1') + getcadf(df_exin, 'CA2') + getcadf(df_exin, 'CA3')
-    df_total['case'] = df_total.index
-    df_total['ca'] = 'ALL'
-    df_exinall = pd.concat([df_exin, df_total], axis=0)
-    df_exinall['ntotal'] = df_exinall['nex'] + df_exinall['nin']
-    df_exinall['exfrac'] = df_exinall['nex']/df_exinall['ntotal']
-
-    # # # Plotting & Statistical tesing
-    stat_fn = 'fig7_4case.txt'
+    pair_id_AB = 978
+    pair_id_BA = 916
+    stat_fn = 'fig7_Intrinsic_Direction.txt'
     stat_record(stat_fn, True)
-    fig_4c = plt.figure(figsize=(total_figw, total_figw/1.5))
+    for caid, ca in enumerate(['CA1', 'CA2', 'CA3']):
+
+        caprefer_df = prefer_pdf[prefer_pdf['ca']==ca]
+        canonprefer_df = nonprefer_pdf[nonprefer_pdf['ca']==ca]
+        stat_record(stat_fn, False, ('='*10) + ca + ('='*10))
+        plot_prefer_nonprefer(ax[caid], caprefer_df, canonprefer_df, pre_c, stat_fn)
+    plot_intrinsic_direction_illustration(np.array(ax_corrAB), expdf, pair_id_AB, pre_c, 'A->B')
+    plot_intrinsic_direction_illustration(np.array(ax_corrBA), expdf, pair_id_BA, pre_c, 'B->A')
+    compare_to_extrinsic(expdf, stat_fn)
+
+    # Hide yticks and ylabels for column CA1 & CA2
+    for i in range(6):
+        ax_ca2[i].set_ylabel('')
+        plt.setp(ax_ca2[i].get_yticklabels(), visible=False)
+        ax_ca3[i].set_ylabel('')
+        plt.setp(ax_ca3[i].get_yticklabels(), visible=False)
+
+        if i == 1: # Hide xticks and xlabels for A>B precession
+            ax_ca1[i].set_xlabel('')
+            plt.setp(ax_ca1[i].get_xticklabels(), visible=False)
+            ax_ca2[i].set_xlabel('')
+            plt.setp(ax_ca2[i].get_xticklabels(), visible=False)
+            ax_ca3[i].set_xlabel('')
+            plt.setp(ax_ca3[i].get_xticklabels(), visible=False)
+
+        # Hide xlabels for column CA1 & CA3
+        ax_ca1[i].set_xlabel('')
+        ax_ca3[i].set_xlabel('')
+
+
+
+    ax_ca1[5].annotate(r'$\times10^{-1}$', xy=(0, 0.9), xycoords='axes fraction', fontsize=legendsize)
+
+    ax_corrAB[0].set_title('Pair#%d\nDirectional bias '%(pair_id_AB) + r'$A\rightarrow B$', fontsize=legendsize, ha='center')
+    fig.text(0.1, 0.55, r'$A\rightarrow B$' + '\nSame', fontsize=legendsize, ha='center')
+    fig.text(0.285, 0.55, r'$B\rightarrow A$' + '\nOpposite', fontsize=legendsize, ha='center')
+    ax_corrBA[0].set_title('Pair#%d\nDirectional bias '%(pair_id_BA) + r'$B\rightarrow A$', fontsize=legendsize, ha='center')
+    fig.text(0.1, 0.05, r'$A\rightarrow B$' + '\nOpposite', fontsize=legendsize, ha='center')
+    fig.text(0.285, 0.05, r'$B\rightarrow A$' + '\nSame', fontsize=legendsize, ha='center')
+
+
+    ax_ca1[0].set_title('CA1', fontsize=titlesize)
+    ax_ca2[0].set_title('CA2', fontsize=titlesize)
+    ax_ca3[0].set_title('CA3', fontsize=titlesize)
+
+    fig.savefig(join(save_dir, 'exp_intrinsic_precession.png'), dpi=dpi)
+    fig.savefig(join(save_dir, 'exp_intrinsic_precession.eps'), dpi=dpi)
+    return
+
+def FourCasesAnalysis(expdf, save_dir):
+    def organize_4case_dfs(expdf):
+        def flip_direction(direction):
+            if direction == "A->B":
+                return "B->A"
+            elif direction == "B->A":
+                return "A->B"
+            else:
+                return direction
+        frac_field = 2
+        frac_pass = 2
+
+
+        df = expdf[(~expdf['rate_angle1'].isna()) & (~expdf['rate_angle2'].isna()) & \
+                   (~expdf['overlap_ratio'].isna())
+                   ].reset_index(drop=True)
+
+
+        allpdf_dict = dict(ca=[], pair_id=[], field_orient=[], overlap_ratio=[], fanglep=[], fanglediff=[], meanfangle=[],
+                           pass_id=[], passangle=[], precess_exist_tmp=[],
+                           fangle1=[], fangle2=[], pairlagAB=[], pairlagBA=[],
+                           nspikes1=[], nspikes2=[], onset1=[], onset2=[], slope1=[], slope2=[],
+                           phasesp1=[], phasesp2=[], dsp1=[], dsp2=[], direction=[]
+                           )
+
+
+        for i in range(df.shape[0]):
+
+            ca, pair_id, overlap_r = df.loc[i, ['ca', 'pair_id', 'overlap_ratio']]
+            fangle1, fangle2, fanglep = df.loc[i, ['rate_angle1', 'rate_angle2', 'rate_anglep']]
+            lagAB, lagBA = df.loc[i, ['phaselag_AB', 'phaselag_BA']]
+            fanglediff = np.abs(cdiff(fangle1, fangle2))
+            meanfangle = shiftcyc_full2half(circmean([fangle1, fangle2]))
+
+            # Orientation flipping
+            pos1, pos2 = df.loc[i, ['com1', 'com2']]
+            posdiff = pos2 - pos1
+            field_orient = np.angle(posdiff[0] + 1j * posdiff[1])
+            absdiff = np.abs(cdiff(field_orient, meanfangle))
+            ABalign = True if absdiff < np.pi/2 else False
+
+            pass_dfp = df.loc[i, 'precess_dfp']
+            num_pass = pass_dfp.shape[0]
+            for npass in range(num_pass):
+
+                precess_exist, onset1, onset2, slope1, slope2 = pass_dfp.loc[npass, ['precess_exist', 'rcc_c1', 'rcc_c2', 'rcc_m1', 'rcc_m2']]
+                phasesp1, phasesp2, mean_anglesp1, mean_anglesp2 = pass_dfp.loc[npass, ['phasesp1', 'phasesp2', 'mean_anglesp1', 'mean_anglesp2']]
+                direction, dsp1, dsp2 = pass_dfp.loc[npass, ['direction', 'dsp1', 'dsp2']]
+                nsp1, nsp2 = phasesp1.shape[0], phasesp2.shape[0]
+                precess_exist1, precess_exist2 = pass_dfp.loc[npass, ['precess_exist1', 'precess_exist2']]
+                passangle = circmean([mean_anglesp1, mean_anglesp2])
+
+                allpdf_dict['ca'].append(ca)
+                allpdf_dict['pair_id'].append(pair_id)
+                allpdf_dict['field_orient'].append(field_orient)
+                allpdf_dict['overlap_ratio'].append(overlap_r)
+                allpdf_dict['fanglep'].append(fanglep)
+                allpdf_dict['fanglediff'].append(fanglediff)
+                allpdf_dict['meanfangle'].append(meanfangle)
+                allpdf_dict['pass_id'].append(npass)
+                allpdf_dict['passangle'].append(passangle)
+
+                allpdf_dict['precess_exist_tmp'].append((precess_exist1, precess_exist2))
+                allpdf_dict['fangle1'].append(fangle1)
+                allpdf_dict['fangle2'].append(fangle2)
+                allpdf_dict['pairlagAB'].append(lagAB)
+                allpdf_dict['pairlagBA'].append(lagBA)
+                allpdf_dict['nspikes1'].append(nsp1)
+                allpdf_dict['nspikes2'].append(nsp2)
+                allpdf_dict['onset1'].append(onset1)
+                allpdf_dict['onset2'].append(onset2)
+                allpdf_dict['slope1'].append(slope1)
+                allpdf_dict['slope2'].append(slope2)
+                allpdf_dict['phasesp1'].append(phasesp1)
+                allpdf_dict['phasesp2'].append(phasesp2)
+                allpdf_dict['dsp1'].append(dsp1)
+                allpdf_dict['dsp2'].append(dsp2)
+                allpdf_dict['direction'].append(direction)
+
+
+
+        allpdf_sep = pd.DataFrame(allpdf_dict)
+
+        # combined 1 & 2
+        stay_keys = ['ca', 'pair_id', 'field_orient', 'overlap_ratio', 'fanglep', 'fanglediff', 'meanfangle', 'pass_id',
+                     'passangle', 'precess_exist_tmp', 'fangle1' , 'fangle2', 'pairlagAB', 'pairlagBA', 'direction']
+        change_keys = ['nspikes', 'onset', 'slope', 'phasesp', 'dsp']
+
+
+        allpdf1 = allpdf_sep[stay_keys + [key+'1' for key in change_keys]]
+        allpdf2 = allpdf_sep[stay_keys + [key+'2' for key in change_keys]]
+        allpdf1.rename(columns={key+'1':key.replace('1', '') for key in change_keys}, inplace=True)
+        allpdf2.rename(columns={key+'2':key.replace('2', '') for key in change_keys}, inplace=True)
+        allpdf = pd.concat([allpdf1, allpdf2], axis=0, ignore_index=True)
+        allpdf['precess_exist'] = allpdf['precess_exist_tmp'].apply(lambda x : x[0] & x[1])
+        allpdf = allpdf[allpdf['precess_exist']].reset_index(drop=True)
+
+
+        allpdf = allpdf[allpdf['slope'].abs() < 1.9].reset_index(drop=True)
+        inAB_mask = (allpdf['overlap_ratio'] < 0) & (allpdf['pairlagAB'] > 0) & (allpdf['pairlagBA'] > 0)
+        inBA_mask = (allpdf['overlap_ratio'] < 0) & (allpdf['pairlagAB'] < 0) & (allpdf['pairlagBA'] < 0)
+        preferAB_mask = inAB_mask & (allpdf['direction']=='A->B')
+        nonpreferAB_mask = inBA_mask & (allpdf['direction']=='A->B')
+        preferBA_mask = inBA_mask & (allpdf['direction']=='B->A')
+        nonpreferBA_mask = inAB_mask & (allpdf['direction']=='B->A')
+        allpdf.loc[preferAB_mask | preferBA_mask, 'bias'] = 'same'
+        allpdf.loc[nonpreferAB_mask | nonpreferBA_mask, 'bias'] = 'opp'
+        allpdf.loc[inAB_mask, 'bias_direction'] = 'A->B'
+        allpdf.loc[inBA_mask, 'bias_direction'] = 'B->A'
+
+
+        # Case 1 & 2
+        allpdf['simfield'] = allpdf['fanglediff'] < (np.pi/frac_field)
+        allpdf['oppfield'] = allpdf['fanglediff'] > (np.pi - np.pi/frac_field)
+        passfield_adiff = np.abs(cdiff(allpdf['passangle'], allpdf['meanfangle']))
+        passfield_adiff1 = np.abs(cdiff(allpdf['passangle'], allpdf['fangle1']))
+        passfield_adiff2 = np.abs(cdiff(allpdf['passangle'], allpdf['fangle2']))
+        passfield_adiffp = np.abs(cdiff(allpdf['passangle'], allpdf['fanglep']))
+        allpdf['case1'] = (passfield_adiff1 < (np.pi/frac_pass)) & (passfield_adiff2 < (np.pi/frac_pass)) & allpdf['simfield']
+        allpdf['case2'] = (passfield_adiff1 > (np.pi - np.pi/frac_pass)) & (passfield_adiff2 > (np.pi - np.pi/frac_pass)) & allpdf['simfield']
+        #     allpdf['case1'] = (passfield_adiff1 < (np.pi/frac_pass)) & (passfield_adiff2 < (np.pi/frac_pass))
+        #     allpdf['case2'] = (passfield_adiff1 > (np.pi - np.pi/frac_pass)) & (passfield_adiff2 > (np.pi - np.pi/frac_pass))
+
+        # Case 3 & 4
+        diff1tmp = np.abs(cdiff(allpdf['passangle'], allpdf['fangle1']))
+        diff2tmp = np.abs(cdiff(allpdf['passangle'], allpdf['fangle2']))
+        simto1_AtoB = (diff1tmp < diff2tmp) & (diff1tmp < (np.pi/frac_pass)) & (allpdf['direction'] == 'A->B') & allpdf['oppfield']
+        simto1_BtoA = (diff1tmp >= diff2tmp) & (diff2tmp < (np.pi/frac_pass)) & (allpdf['direction'] == 'B->A') & allpdf['oppfield']
+        simto2_AtoB = (diff1tmp >= diff2tmp) & (diff2tmp < (np.pi/frac_pass)) & (allpdf['direction'] == 'A->B') & allpdf['oppfield']
+        simto2_BtoA = (diff1tmp < diff2tmp) & (diff1tmp < (np.pi/frac_pass)) & (allpdf['direction'] == 'B->A') & allpdf['oppfield']
+        allpdf['case3'] = simto1_AtoB | simto1_BtoA
+        allpdf['case4'] = simto2_AtoB | simto2_BtoA
+
+
+        # exin df
+        df_exin_dict = dict(nex=[], nin=[], ca=[], case=[])
+
+        for caid, (ca, capdf) in enumerate(allpdf.groupby('ca')):
+
+            # Onset per CA
+            case1df = capdf[capdf['case1']].reset_index(drop=True)
+            case2df = capdf[capdf['case2']].reset_index(drop=True)
+            case3df = capdf[capdf['case3']].reset_index(drop=True)
+            case4df = capdf[capdf['case4']].reset_index(drop=True)
+
+            # Ex-/intrinsic numbers per CA
+            case1udf = case1df.drop_duplicates(subset=['pair_id'])
+            case2udf = case2df.drop_duplicates(subset=['pair_id'])
+            case3udf = case3df.drop_duplicates(subset=['pair_id'])
+            case4udf = case4df.drop_duplicates(subset=['pair_id'])
+
+            nex1, nin1 = (case1udf['overlap_ratio'] > 0).sum(), (case1udf['overlap_ratio'] <= 0).sum()
+            nex2, nin2 = (case2udf['overlap_ratio'] > 0).sum(), (case2udf['overlap_ratio'] <= 0).sum()
+            nex3, nin3 = (case3udf['overlap_ratio'] > 0).sum(), (case3udf['overlap_ratio'] <= 0).sum()
+            nex4, nin4 = (case4udf['overlap_ratio'] > 0).sum(), (case4udf['overlap_ratio'] <= 0).sum()
+            df_exin_dict['ca'].extend([ca] * 4)
+            df_exin_dict['case'].extend([1, 2, 3, 4])
+            df_exin_dict['nex'].extend(([nex1, nex2, nex3, nex4]))
+            df_exin_dict['nin'].extend(([nin1, nin2, nin3, nin4]))
+        df_exin = pd.DataFrame(df_exin_dict)
+        df_exin.index = df_exin.case
+        getcadf = lambda x, ca : x[x['ca']==ca][['nex', 'nin']]
+        df_total = getcadf(df_exin, 'CA1') + getcadf(df_exin, 'CA2') + getcadf(df_exin, 'CA3')
+        df_total['case'] = df_total.index
+        df_total['ca'] = 'ALL'
+        df_exinall = pd.concat([df_exin, df_total], axis=0)
+        df_exinall['ntotal'] = df_exinall['nex'] + df_exinall['nin']
+        df_exinall['exfrac'] = df_exinall['nex']/df_exinall['ntotal']
+        df_exinall['exratio'] = df_exinall['nex'] / df_exinall['nin']
+        return allpdf, (df_exin, df_total, df_exinall)
+
+    allpdf, (df_exin, df_total, df_exinall) = organize_4case_dfs(expdf)
+
+    # # # ================================ Plotting & Statistical tesing =============================================
+    stat_fn = 'figS1_4case.txt'
+    stat_record(stat_fn, True)
+    fig_4c = plt.figure(figsize=(total_figw, total_figw/1.25), facecolor='w')
 
     main_w = 1
 
-    illu_w, illu_h = main_w/4, 1/3
+    illu_w, illu_h = main_w/4, 1/4
     illu_y = 1-illu_h
-    squeezex, squeezey = 0.075, 0.1
+    squeezex, squeezey = 0.075, 0.05
     xoffset = 0
     ax_illu = [fig_4c.add_axes([0+squeezex/2+xoffset, illu_y+squeezey/2, illu_w-squeezex, illu_h-squeezey]),
                fig_4c.add_axes([illu_w+squeezex/2+xoffset, illu_y+squeezey/2, illu_w-squeezex, illu_h-squeezey]),
@@ -1779,24 +2165,34 @@ def FourCasesAnalysis(expdf, save_dir):
                ]
 
 
-    exin2d_w, exin2d_h = main_w*1.5/4, 2/3
+    exin2d_w, exin2d_h = main_w*1.5/4, 3/4
     exin2d_y = 1-illu_h- exin2d_h
-    squeezex, squeezey = 0.1, 0.2
+    squeezex, squeezey = 0.1, 0.3
     exin2d_xoffset, exin2d_yoffset = 0.025, 0.05
     ax_exin2d = fig_4c.add_axes([0+squeezex/2+exin2d_xoffset, exin2d_y+squeezey/2+exin2d_yoffset, exin2d_w-squeezex, exin2d_h-squeezey])
 
-    exinfrac_w, exinfrac_h = main_w*2.5/4, 1/3
+    exinfrac_w, exinfrac_h = main_w*2.5/4, 1/4
     exinfrac_y = 1-illu_h- exinfrac_h
     squeezex, squeezey = 0.1, 0.1
     exinfrac_xoffset, exinfrac_yoffset = 0.05, 0.05
     ax_exfrac = fig_4c.add_axes([exin2d_w+squeezex/2+exinfrac_xoffset, exinfrac_y+squeezey/2+exinfrac_yoffset, exinfrac_w-squeezex, exinfrac_h-squeezey])
 
-    onset_w, onset_h = main_w*2.5/4, 1/3
+    onset_w, onset_h = main_w*2.5/4, 1/4
     onset_y = 1-illu_h- exinfrac_h- onset_h
     squeezex, squeezey = 0.1, 0.1
     onset_xoffset, onset_yoffset = 0.05, 0.1
     ax_onset = fig_4c.add_axes([exin2d_w+squeezex/2+onset_xoffset, onset_y+squeezey/2+onset_yoffset, onset_w-squeezex, onset_h-squeezey])
     ax_onset.get_shared_x_axes().join(ax_onset, ax_exfrac)
+
+    phasesp_w, phasesp_h = main_w*2.5/4, 1/4
+    phasesp_y = 1-illu_h- exinfrac_h- onset_h - phasesp_h
+    squeezex, squeezey = 0.1, 0.1
+    phasesp_xoffset, phasesp_yoffset = 0.05, 0.1
+    ax_phasesp = fig_4c.add_axes([exin2d_w+squeezex/2+phasesp_xoffset, phasesp_y+squeezey/2+phasesp_yoffset, phasesp_w-squeezex, phasesp_h-squeezey])
+    ax_phasesp.get_shared_x_axes().join(ax_phasesp, ax_onset)
+
+
+    xlim = (-0.7+1, 0.7+3)
 
 
     # # Plot case illustration
@@ -1834,7 +2230,7 @@ def FourCasesAnalysis(expdf, save_dir):
     ax_illu[3].arrow(c2x-arrowl, c1y+arrow_upshift, dx=arrowl, dy=0, width=0.025, head_width=0.15, color='k')
 
 
-    # # Ex-in 2d
+    # # Ex-in 2d: plot
     for ca in ['CA1', 'CA2', 'CA3']:
         nex1, nin1 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==1), ['nex', 'nin']].iloc[0]
         nex2, nin2 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==2), ['nex', 'nin']].iloc[0]
@@ -1845,85 +2241,100 @@ def FourCasesAnalysis(expdf, save_dir):
         ax_exin2d.scatter(nex2, nin2, c=ca_c[ca], marker='o', s=ms)
         ax_exin2d.scatter(nex3, nin3, c=ca_c[ca], marker='o', s=ms)
         ax_exin2d.scatter(nex4, nin4, c=ca_c[ca], marker='o', s=ms)
-        ax_exin2d.annotate('1', xy=(nex1, nin1), color=ca_c[ca], zorder=3.1, fontsize=legendsize)
-        ax_exin2d.annotate('2', xy=(nex2, nin2), color=ca_c[ca], zorder=3.1, fontsize=legendsize)
-        ax_exin2d.annotate('3', xy=(nex3, nin3), xytext=(0, -3), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
-        ax_exin2d.annotate('4', xy=(nex4, nin4), xytext=(2, -3), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
+        ax_exin2d.annotate('1', xy=(nex1, nin1), xytext=(0, 0), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
+        ax_exin2d.annotate('2', xy=(nex2, nin2), xytext=(-3, 2), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
+        ax_exin2d.annotate('3', xy=(nex3, nin3), xytext=(3, -3), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
+        ax_exin2d.annotate('4', xy=(nex4, nin4), xytext=(0, 0), textcoords='offset points', color=ca_c[ca], zorder=3.1, fontsize=legendsize)
     nexin = df_exin[['nex', 'nin']].to_numpy()
     ax_exin2d.plot([nexin.min()-5, nexin.max()+5], [nexin.min()-5, nexin.max()+5], c='k', linewidth=0.5)
     ax_exin2d.tick_params(labelsize=ticksize)
-    ax_exin2d.set_xlim(df_exin['nex'].min()-5, df_exin['nex'].max()+5)
-    ax_exin2d.set_ylim(df_exin['nin'].min()-5, df_exin['nin'].max()+5)
+    maxfreq = df_exin[['nex', 'nin']].to_numpy().max()
+    ax_exin2d.set_xlim(0, maxfreq+2.5)
+    ax_exin2d.set_ylim(0, maxfreq+2.5)
     ax_exin2d.set_xlabel('N(extrinsic)', fontsize=fontsize)
     ax_exin2d.set_ylabel('N(intrinsic)', fontsize=fontsize)
     customlegend(ax_exin2d, loc='upper left')
 
-    # CA1 1 vs CA3 1
+
+    # Ex-in 2d: test CA1 1 vs CA3 1 (Not plotted)
     nexCA1_1, ninCA1_1 = df_exinall[(df_exinall['ca']=='CA1') & (df_exinall['case']==1)][['nex', 'nin']].iloc[0]
     nexCA3_1, ninCA3_1 = df_exinall[(df_exinall['ca']=='CA3') & (df_exinall['case']==1)][['nex', 'nin']].iloc[0]
-    p11_31 = fisherexact(np.array([[nexCA1_1, ninCA1_1], [nexCA3_1, ninCA3_1]]))
-    stat_record(stat_fn, False, "Exin-Frac, Case 1, CA1 (Ex:In=%d:%d) vs CA3(Ex:In=%d:%d), Fisher\'s exact test p%s"%(nexCA1_1, ninCA1_1, nexCA3_1, ninCA3_1, p2str(p11_31)))
-    ax_exin2d.annotate('p(  vs  )%s'% (p2str(p11_31)), xy=(0.3, 0.2), xycoords='axes fraction', size=legendsize)
-    ax_exin2d.annotate('1', xy=(0.365, 0.2), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
-    ax_exin2d.annotate('1', xy=(0.5, 0.2), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
+    p11_31, _, p11_31txt = my_fisher_2way(np.array([[nexCA1_1, ninCA1_1], [nexCA3_1, ninCA3_1]]))
+    stat_record(stat_fn, False, "Exin-Frac, Case 1, CA1 (Ex:In=%d:%d=%0.2f) vs CA3(Ex:In=%d:%d=%0.2f), %s"%(nexCA1_1, ninCA1_1, nexCA1_1/ninCA1_1, nexCA3_1, ninCA3_1, nexCA3_1/ninCA3_1, p11_31txt))
+    # ax_exin2d.annotate('p(  vs  )%s'% (p2str(p11_31)), xy=(0.3, 0.2), xycoords='axes fraction', size=legendsize)
+    # ax_exin2d.annotate('1', xy=(0.365, 0.2), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
+    # ax_exin2d.annotate('1', xy=(0.5, 0.2), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
 
 
-    # CA1 2 vs CA3 2
+    # Ex-in 2d: test CA1 2 vs CA3 2
     nexCA1_2, ninCA1_2 = df_exinall[(df_exinall['ca']=='CA1') & (df_exinall['case']==2)][['nex', 'nin']].iloc[0]
     nexCA3_2, ninCA3_2 = df_exinall[(df_exinall['ca']=='CA3') & (df_exinall['case']==2)][['nex', 'nin']].iloc[0]
-    p12_32 = fisherexact(np.array([[nexCA1_2, ninCA1_2], [nexCA3_2, ninCA3_2]]))
-    stat_record(stat_fn, False, "Exin-Frac, Case 2, CA1 (Ex:In=%d:%d) vs CA3(Ex:In=%d:%d), Fisher\'s exact test p%s"%(nexCA1_2, ninCA1_2, nexCA3_2, ninCA3_2, p2str(p12_32)))
-    ax_exin2d.annotate('p(  vs  )%s'% (p2str(p12_32)), xy=(0.3, 0.125), xycoords='axes fraction', size=legendsize)
-    ax_exin2d.annotate('2', xy=(0.365, 0.125), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
-    ax_exin2d.annotate('2', xy=(0.5, 0.125), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
+    p12_32, _, p12_32txt = my_fisher_2way(np.array([[nexCA1_2, ninCA1_2], [nexCA3_2, ninCA3_2]]))
+    stat_record(stat_fn, False, "Exin-Frac, Case 2, CA1 (Ex:In=%d:%d=%0.2f) vs CA3(Ex:In=%d:%d=%0.2f), %s"%(nexCA1_2, ninCA1_2, nexCA1_2/ninCA1_2, nexCA3_2, ninCA3_2, nexCA3_2/ninCA3_2, p12_32txt))
+    ax_exin2d.annotate('p(  vs  )=%s'% (p2str(p12_32)), xy=(0.3, 0.05), xycoords='axes fraction', size=legendsize)
+    ax_exin2d.annotate('2', xy=(0.365, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
+    ax_exin2d.annotate('2', xy=(0.5, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
 
-    # CA1 12 vs CA3 12
+
+    # Ex-in 2d: test CA1 12 vs CA3 12 (Not plotted)
     nex112, nin112 = df_exinall[(df_exinall['ca']=='CA1') & ((df_exinall['case']==1)| (df_exinall['case']==2))][['nex', 'nin']].sum()
     nex312, nin312 = df_exinall[(df_exinall['ca']=='CA3') & ((df_exinall['case']==1)| (df_exinall['case']==2))][['nex', 'nin']].sum()
-    p112_312 = fisherexact(np.array([[nex112, nin112], [nex312, nin312]]))
-    stat_record(stat_fn, False, "Exin-Frac, Case 1+2, CA1 (Ex:In=%d:%d) vs CA3(Ex:In=%d:%d), Fisher\'s exact test p%s"%(nex112, nin112, nex312, nin312, p2str(p112_312)))
-    ax_exin2d.annotate('p(       vs       )%s'% (p2str(p112_312)), xy=(0.3, 0.05), xycoords='axes fraction', size=legendsize)
-    ax_exin2d.annotate('1+2', xy=(0.375, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
-    ax_exin2d.annotate('1+2', xy=(0.625, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
+    p112_312, _, p112_312txt = my_fisher_2way(np.array([[nex112, nin112], [nex312, nin312]]))
+    stat_record(stat_fn, False, "Exin-Frac, Case 1+2, CA1 (Ex:In=%d:%d=%0.2f) vs CA3(Ex:In=%d:%d=%0.2f), %s"%(nex112, nin112, nex112/nin112, nex312, nin312, nex312/nin312, p112_312txt))
+    # ax_exin2d.annotate('p(       vs       )%s'% (p2str(p112_312)), xy=(0.3, 0.05), xycoords='axes fraction', size=legendsize)
+    # ax_exin2d.annotate('1+2', xy=(0.375, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA1'])
+    # ax_exin2d.annotate('1+2', xy=(0.625, 0.05), xycoords='axes fraction', size=legendsize, color=ca_c['CA3'])
+
 
     # # Ex frac
     ca_c['ALL'] = 'gray'
     box_offsets = np.array([-0.3, -0.1, 0.1, 0.3])
     boxw = np.diff(box_offsets).mean()*0.75
-    ca_box_pos = dict(CA1=box_offsets+1, CA2=box_offsets + 2, CA3=box_offsets+3, ALL=box_offsets)
-    for ca in ['CA1', 'CA2', 'CA3', 'ALL']:
-        exfrac1 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==1), 'exfrac'].iloc[0]
-        exfrac2 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==2), 'exfrac'].iloc[0]
-        exfrac3 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==3), 'exfrac'].iloc[0]
-        exfrac4 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==4), 'exfrac'].iloc[0]
+    ca_box_pos = dict(CA1=box_offsets+1, CA2=box_offsets + 2, CA3=box_offsets+3)
+    for ca in ['CA1', 'CA2', 'CA3']:
+        exfrac1 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==1), 'exratio'].iloc[0]
+        exfrac2 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==2), 'exratio'].iloc[0]
+        exfrac3 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==3), 'exratio'].iloc[0]
+        exfrac4 = df_exinall.loc[(df_exinall['ca']==ca) & (df_exinall['case']==4), 'exratio'].iloc[0]
         ax_exfrac.bar(ca_box_pos[ca], [exfrac1, exfrac2, exfrac3, exfrac4], width=boxw, color=ca_c[ca])
+        maxheight = np.max([exfrac1, exfrac3, exfrac3, exfrac4])
 
-        # Test 12
+        # Ex frac:  Test 12
         dftmp12 = df_exinall[(df_exinall['ca']==ca) & ((df_exinall['case']==1) | (df_exinall['case']==2))][['nex', 'nin']]
         nexc1, ninc1 = dftmp12.loc[1, ['nex', 'nin']]
         nexc2, ninc2 = dftmp12.loc[2, ['nex', 'nin']]
         case12_boxmid = np.mean([ca_box_pos[ca][0], ca_box_pos[ca][1]])
-        pval12 = fisherexact(dftmp12.to_numpy())
-        stat_record(stat_fn, False, "Exin-Frac, %s, Case1(Ex:In=%d:%d) vs Case2(Ex:In=%d:%d), Fisher\'s exact test p%s"%(ca, nexc1, ninc1, nexc2, ninc2, p2str(pval12)))
-        ax_exfrac.text(case12_boxmid-boxw*2, 0.8, 'p'+p2str(pval12), fontsize=legendsize)
-        ax_exfrac.errorbar(x=case12_boxmid, y=0.75, xerr=boxw/2, c='k', capsize=2.5)
+        pval12, _, pval12txt = my_fisher_2way(dftmp12.to_numpy())
+        stat_record(stat_fn, False, "Exin-Frac, %s, Case1(Ex:In=%d:%d=%0.2f) vs Case2(Ex:In=%d:%d=%0.2f), %s"%(ca, nexc1, ninc1, nexc1/ninc1, nexc2, ninc2, nexc2/ninc2, pval12txt))
+        ax_exfrac.text(case12_boxmid-boxw*2, 4, 'p=%s'%p2str(pval12), fontsize=legendsize)
+        ax_exfrac.errorbar(x=case12_boxmid, y=3.5, xerr=boxw/2, c='k', capsize=2.5)
 
+        # Ex frac: Test 3 vs 4 (not plotted)
+        dftmp34 = df_exinall[(df_exinall['ca']==ca) & ((df_exinall['case']==3) | (df_exinall['case']==4))][['nex', 'nin']]
+        nexc3, ninc3 = dftmp34.loc[3, ['nex', 'nin']]
+        nexc4, ninc4 = dftmp34.loc[4, ['nex', 'nin']]
+        case34_boxmid = np.mean([ca_box_pos[ca][2], ca_box_pos[ca][3]])
+        pval34, _, pval34txt = my_fisher_2way(dftmp34.to_numpy())
+        stat_record(stat_fn, False, "Exin-Frac, %s, Case3(Ex:In=%d:%d=%0.2f) vs Case4(Ex:In=%d:%d=%0.2f), %s"%(ca, nexc3, ninc3, nexc3/ninc3, nexc4, ninc4, nexc4/ninc4, pval34txt))
+        # ax_exfrac.text(case34_boxmid-boxw*2, 0.8, 'p'+p2str(pval34), fontsize=legendsize)
+        # ax_exfrac.errorbar(x=case34_boxmid, y=0.75, xerr=boxw/2, c='k', capsize=2.5)
 
-        # Test 12 vs 34
+        # Ex frac:  Test 12 vs 34 (Not plotted)
         dftmp34 = df_exinall[(df_exinall['ca']==ca) & ((df_exinall['case']==3) | (df_exinall['case']==4))][['nex', 'nin']]
         nex12, nin12 = dftmp12.sum()
         nex34, nin34 = dftmp34.sum()
         all_boxmid = np.mean(ca_box_pos[ca])
-        pval1234 = fisherexact(np.array([[nex12, nin12], [nex34, nin34]]))
-        stat_record(stat_fn, False, "Exin-Frac, %s, Case12(Ex:In=%d:%d) vs Case34(Ex:In=%d:%d), Fisher\'s exact test p%s"%(ca, nex12, nin12, nex34, nin34, p2str(pval1234)))
-        ax_exfrac.text(all_boxmid-boxw*2, 1.05, 'p'+p2str(pval1234), fontsize=legendsize)
-        ax_exfrac.errorbar(x=all_boxmid, y=1, xerr=boxw*1.5, c='k', capsize=2.5)
+        pval1234, _, pval1234txt = my_fisher_2way(np.array([[nex12, nin12], [nex34, nin34]]))
+        stat_record(stat_fn, False, "Exin-Frac, %s, Case12(Ex:In=%d:%d=%0.2f) vs Case34(Ex:In=%d:%d=%0.2f), %s"%(ca, nex12, nin12, nex12/nin12, nex34, nin34, nex34/nin34, pval1234txt))
+        # ax_exfrac.text(all_boxmid-boxw*2, 4.3, 'p'+p2str(pval1234), fontsize=legendsize)
+        # ax_exfrac.errorbar(x=all_boxmid, y=4, xerr=boxw*1.5, c='k', capsize=2.5)
 
-
-    ax_exfrac.set_ylim(0, 1.2)
-    ax_exfrac.set_xticks(np.concatenate([ca_box_pos['CA1'], ca_box_pos['CA2'], ca_box_pos['CA3'], ca_box_pos['ALL']]))
-    ax_exfrac.set_ylabel('Ex. Frac.', fontsize=fontsize)
-    ax_exfrac.set_xticklabels(['']*16)
+    ax_exfrac.set_ylim(0, 6)
+    ax_exfrac.set_yticks(np.arange(0, 7, 2))
+    ax_exfrac.set_yticks(np.arange(0, 7, 1), minor=True)
+    ax_exfrac.set_xticks(np.concatenate([ca_box_pos['CA1'], ca_box_pos['CA2'], ca_box_pos['CA3']]))
+    ax_exfrac.set_ylabel('Ex-In ratio', fontsize=fontsize)
+    ax_exfrac.set_xticklabels(['']*12)
 
     # # Onset
     onset_dict = dict()
@@ -1933,96 +2344,114 @@ def FourCasesAnalysis(expdf, save_dir):
             onset_dict[ca + str(caseid)] = allpdf[(allpdf['ca']==ca) & (allpdf['case%d'%caseid])]['onset'].to_numpy()
         onset_dict['ALL' + str(caseid)] = allpdf[allpdf['case%d'%caseid]]['onset'].to_numpy()
 
-    for ca in ['CA1', 'CA2', 'CA3', 'ALL']:
+    for ca in ['CA1', 'CA2', 'CA3']:
         x_mean = np.array([circmean(onset_dict[ca + '%d'%i]) for i in range(1, 5)])
         x_tsd = np.array([np.std(onset_dict[ca + '%d'%i])/np.sqrt(onset_dict[ca + '%d'%i].shape[0]) for i in range(1, 5)])
         ax_onset.errorbar(x=ca_box_pos[ca], y=x_mean, yerr=x_tsd*1.96, fmt='_k', capsize=5, ecolor=ca_c[ca])
 
-        # Test 12
+        # Onset Test 1 vs 2
         case12_boxmid = np.mean([ca_box_pos[ca][0], ca_box_pos[ca][1]])
-        pval12, table12 = watson_williams(onset_dict['%s1'%(ca)], onset_dict['%s2'%(ca)])
-        stat_record(stat_fn, False, 'Onset, %s, Case 1 vs Case 2, Watson-Williams test, %s'%(ca, wwtable2text(table12)))
-        ax_onset.text(case12_boxmid-boxw*2, 5.1, 'p'+p2str(pval12), fontsize=legendsize)
+        pval12, _, _, pval12txt = my_ww_2samp(onset_dict['%s1'%(ca)], onset_dict['%s2'%(ca)], 'Case1', 'Case2')
+        stat_record(stat_fn, False, 'Onset, %s, Case 1 vs Case 2, %s'%(ca, pval12txt))
+        ax_onset.text(case12_boxmid-boxw*2, 5.1, 'p=%s'%p2str(pval12), fontsize=legendsize)
         ax_onset.errorbar(x=case12_boxmid, y=4.9, xerr=boxw/2, c='k', capsize=2.5)
 
-
-        # Test 12 vs 34
-        all_boxmid = np.mean(ca_box_pos[ca])
-        onset12 = np.concatenate([onset_dict['%s1'%(ca)], onset_dict['%s2'%(ca)]])
-        onset34 = np.concatenate([onset_dict['%s3'%(ca)], onset_dict['%s4'%(ca)]])
-        pval1234, table1234 = watson_williams(onset12, onset34)
-        stat_record(stat_fn, False, 'Onset, %s, Case 1+2 vs Case 3+4, Watson-Williams test, %s'%(ca, wwtable2text(table1234)))
-        ax_onset.text(all_boxmid-boxw*2, 6, 'p'+p2str(pval1234), fontsize=legendsize)
-        ax_onset.errorbar(x=all_boxmid, y=5.8, xerr=boxw*1.5, c='k', capsize=2.5)
+        # Onset Test 3 vs 4 (Not plotted)
+        case34_boxmid = np.mean([ca_box_pos[ca][2], ca_box_pos[ca][3]])
+        pval34, _, _, pval34txt = my_ww_2samp(onset_dict['%s3'%(ca)], onset_dict['%s4'%(ca)], 'Case3', 'Case4')
+        stat_record(stat_fn, False, 'Onset, %s, Case 3 vs Case 4, %s'%(ca, pval34txt))
 
 
     ax_onset.set_ylim(2, 2*np.pi+0.5)
     ax_onset.set_yticks([np.pi, 2*np.pi])
     ax_onset.set_yticklabels(['$\pi$', '$2\pi$'])
-
     ax_onset.set_ylabel('Onset', fontsize=fontsize)
-    ax_onset.set_xticks(np.concatenate([ca_box_pos['CA1'], ca_box_pos['CA2'], ca_box_pos['CA3'], ca_box_pos['ALL']]))
-    ax_onset.set_xticklabels(list('1234')*4)
+    ax_onset.set_xticks(np.concatenate([ca_box_pos['CA1'], ca_box_pos['CA2'], ca_box_pos['CA3']]))
+    ax_onset.set_xticklabels(['']*12)
 
-    for ax_each in [ax_exin2d, ax_exfrac, ax_onset]:
+
+
+    # # Phasesp
+    phasesp_dict = dict()
+    case34_boxmid = np.mean([ca_box_pos[ca][2], ca_box_pos[ca][3]])
+    for caseid in [1, 2, 3, 4]:
+        for ca in ['CA1', 'CA2', 'CA3']:
+            try:
+                phasesp_dict[ca + str(caseid)] = np.concatenate(allpdf[(allpdf['ca']==ca) & (allpdf['case%d'%caseid])]['phasesp'].to_list())
+            except:
+                phasesp_dict[ca + str(caseid)] = np.array([0])
+                print('Phasesp, case %d %s not valid' % (caseid, ca))
+        phasesp_dict['ALL' + str(caseid)] = np.concatenate(allpdf[allpdf['case%d'%caseid]]['phasesp'].to_list())
+
+    for ca in ['CA1', 'CA2', 'CA3']:
+        x_mean = np.array([circmean(phasesp_dict[ca + '%d'%i]) for i in range(1, 5)])
+        x_tsd = np.array([np.std(phasesp_dict[ca + '%d'%i])/np.sqrt(phasesp_dict[ca + '%d'%i].shape[0]) for i in range(1, 5)])
+        ax_phasesp.errorbar(x=ca_box_pos[ca], y=x_mean, yerr=x_tsd*1.96, fmt='_k', capsize=5, ecolor=ca_c[ca])
+
+        # Phasesp: Test 1 vs 2
+        case12_boxmid = np.mean([ca_box_pos[ca][0], ca_box_pos[ca][1]])
+        pval12, _, _, pval12txt = my_ww_2samp(phasesp_dict['%s1'%(ca)], phasesp_dict['%s2'%(ca)], 'Case1', 'Case2')
+        stat_record(stat_fn, False, 'Spike phases, %s, Case 1 vs Case 2, %s'%(ca, pval12txt))
+        ax_phasesp.text(case12_boxmid-boxw*2, 3.1, 'p=%s'%p2str(pval12), fontsize=legendsize)
+        ax_phasesp.errorbar(x=case12_boxmid, y=2.9, xerr=boxw/2, c='k', capsize=2.5)
+
+        # Phasesp: Test 3 vs 4
+        case34_boxmid = np.mean([ca_box_pos[ca][2], ca_box_pos[ca][3]])
+        pval34, _, _, pval34txt = my_ww_2samp(phasesp_dict['%s3'%(ca)], phasesp_dict['%s4'%(ca)], 'Case3', 'Case4')
+        stat_record(stat_fn, False, 'Spike phases, %s, Case 3 vs Case 4, %s'%(ca, pval34txt))
+
+
+    ax_phasesp.set_ylim(0, np.pi+0.5)
+    ax_phasesp.set_yticks([0, np.pi/2, np.pi])
+    ax_phasesp.set_yticklabels(['0', '$\dfrac{\pi}{2}$' , '$\pi$'])
+    ax_phasesp.set_ylabel('Phase', fontsize=fontsize)
+    ax_phasesp.set_xticks(np.concatenate([ca_box_pos['CA1'], ca_box_pos['CA2'], ca_box_pos['CA3']]))
+    ax_phasesp.set_xticklabels(list('1234')*3)
+    ax_phasesp.set_xlim(*xlim)
+
+
+    for ax_each in [ax_exin2d, ax_exfrac, ax_onset, ax_phasesp]:
         ax_each.spines['right'].set_visible(False)
         ax_each.spines['top'].set_visible(False)
 
 
     fig_4c.text(0.425, 0.1025, 'Case', fontsize=fontsize)
-    fig_4c.text(0.535, 0.06, 'All', fontsize=fontsize)
-    fig_4c.text(0.654, 0.06, 'CA1', fontsize=fontsize)
-    fig_4c.text(0.78, 0.06, 'CA2', fontsize=fontsize)
-    fig_4c.text(0.908, 0.06, 'CA3', fontsize=fontsize)
-
+    fig_4c.text(0.56, 0.06, 'CA1', fontsize=fontsize)
+    fig_4c.text(0.715, 0.06, 'CA2', fontsize=fontsize)
+    fig_4c.text(0.8675, 0.06, 'CA3', fontsize=fontsize)
 
     fig_4c.savefig(join(save_dir, 'exp_4case.png'), dpi=dpi)
     fig_4c.savefig(join(save_dir, 'exp_4case.eps'), dpi=dpi)
+    return None
 
-
-
-
-
-def RePreprocess(pairdf):
-    all_precess_list = []
-    precess_filter = PrecessionFilter()
-    for i in range(pairdf.shape[0]):
-        print('\rRepreprocess %d/%d'%(i, pairdf.shape[0]), end="", flush=True)
-        precessdf = pairdf.loc[i, 'precess_dfp']
-        minocc1, minocc2 = pairdf.loc[i, ['minocc1', 'minocc2']]
-        precess_dfp = precess_filter.filter_pair(precessdf)
-        all_precess_list.append(precess_dfp)
-    print()
-
-    pairdf['precess_dfp'] = all_precess_list
-    return pairdf
-
-
-
-if __name__ == '__main__':
-    # tag = '_DirectAllChunk_Phase'
-    tag = ''
-    save_dir = 'result_plots/pair_fields%s'%(tag)
-    pairsim_dir = 'pairangle_similarity%s'%(tag)
+def main():
+    # # Setting
+    data_pth = 'results/emankin/pairfield_df.pickle'
+    save_dir = 'result_plots/pair_fields'
     os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(join(save_dir, pairsim_dir), exist_ok=True)
-    expdf = pd.read_pickle('results/exp/pair_field/pairfield_df.pickle')
 
-    # expdf['overlap_ratio'] = expdf['overlap_ratio_phase']
-    # expdf['overlap_plus'] = expdf['overlap_plus_phase']
-    # expdf['overlap_minus'] = expdf['overlap_minus_phase']
+    # # Loading
+    expdf = pd.read_pickle(data_pth)
 
+    # Analysis
     omniplot_pairfields(expdf, save_dir=save_dir)  # Fig 4
+    compare_single_vs_pair_directionality()  # Fig 4, without plotting
+
     plot_pair_correlation(expdf, save_dir)  # Fig 5
     # plot_example_exin(expdf, save_dir)  # Fig 6 exintrinsic example
     plot_exintrinsic(expdf, save_dir)  # Fig 6 ex-in scatter
-    plot_exintrinsic_concentration(expdf, save_dir)  # Fig 6 concentration
-    plot_pairangle_similarity_analysis(expdf, save_dir=join(save_dir, pairsim_dir), nap_thresh=1)  # Fig 6
-    FourCasesAnalysis(expdf, save_dir=save_dir)  # Fig 7 Four-cases
 
-    # plot_ALL_examples_correlogram(expdf)
-
+    plot_pairangle_similarity_analysis(expdf, save_dir=save_dir)  # Fig 6
+    plot_intrinsic_precession_property(expdf, save_dir=save_dir)  # Fig 7 Intrinsic direction
+    FourCasesAnalysis(expdf, save_dir=save_dir)  # Fig S1 Four-cases
 
     # # Archive
+    # plot_ALL_examples_correlogram(expdf)
     # plot_kld(expdf, save_dir=save_dir)  # deleted
     # plot_pair_single_angles_analysis(expdf, save_dir)  # deleted
+    # plot_exintrinsic_concentration(expdf, save_dir)  # deleted (Fig 6)
+
+
+if __name__ == '__main__':
+
+    main()

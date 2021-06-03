@@ -6,15 +6,12 @@ import matplotlib.pyplot as plt
 from os.path import join
 import torch
 from scipy.interpolate import interp1d
-from scipy.stats import ranksums, chi2_contingency
-from torch.distributions.von_mises import VonMises
-from scipy.integrate import odeint
 from pycircstat.descriptive import cdiff
 
 from common.comput_utils import linear_gauss_density, segment_passes, compute_straightness
-from common.script_wrappers import DirectionalityStatsByThresh
 from common.shared_vars import total_figw, ticksize, fontsize, dpi
-from common.utils import load_pickle, stat_record
+from common.utils import load_pickle
+from common.stattests import stat_record
 from common.visualization import customlegend
 
 

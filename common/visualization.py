@@ -3,19 +3,20 @@ import matplotlib as mpl
 from matplotlib import cm
 import numpy as np
 import pandas as pd
-from astropy.stats.circstats import vtest, rayleightest, circmean, circvar
 from pycircstat import cdiff
-
+from pycircstat import mean as circmean
 from common.linear_circular_r import rcc
-from common.utils import load_pickle, sigtext
+from common.utils import load_pickle
+from common.stattests import p2str
 from common.comput_utils import dist_overlap, correlate, smooth_xy, \
-    normsig, linear_circular_gauss_density, circular_density_1d, linear_density_1d
+    normsig, linear_circular_gauss_density, circular_density_1d, linear_density_1d, fisherexact, midedges, ranksums
 from common.correlogram import Crosser, ThetaEstimator, Bootstrapper
 from pycircstat.tests import watson_williams, rayleigh
 
 from scipy import interpolate
 from scipy.stats import pearsonr, chi2_contingency, chi2, ttest_ind, pearsonr, spearmanr, chisquare, ttest_1samp, \
     fisher_exact
+from common.shared_vars import fontsize, ticksize, legendsize, titlesize, ca_c, dpi, total_figw
 
 
 def plot_correlogram(ax, df, tag, direct='A->B', overlap_key='overlap', color='gray', density=False,
@@ -85,7 +86,7 @@ def plot_correlogram(ax, df, tag, direct='A->B', overlap_key='overlap', color='g
         lag_regress = 2 * np.pi * r_regress * m
         for tmpid, intercept in enumerate([2 * mul_idx * np.pi + c for mul_idx in [-2, -1, 0, 1, 2]]):
             if tmpid == 0:
-                ax.plot(r_regress, lag_regress + intercept, c='k', linewidth=linew, label='rho=%0.2f (%s)'%(r, sigtext(pval)))
+                ax.plot(r_regress, lag_regress + intercept, c='k', linewidth=linew, label='rho=%0.2f (p%s)'%(r, p2str(pval)))
             else:
                 ax.plot(r_regress, lag_regress + intercept, c='k', linewidth=linew)
 
@@ -133,7 +134,7 @@ def color_wheel(cmap_key='hsv', figsize=(4, 4)):
     fig = plt.figure(figsize=figsize)
 
     ax = fig.add_axes([0.1, 0.1, 0.8, 0.8], projection='polar')
-    ax._direction = np.pi  ## This is a nasty hack - using the hidden field to
+    # ax._direction = np.pi  ## This is a nasty hack - using the hidden field to
     ## multiply the values such that 1 become 2*pi
     ## this field is supposed to take values 1 or -1 only!!
 
@@ -219,7 +220,7 @@ def plot_marginal_slices(ax, xx, yy, zz, selected_x, slice_yrange, slicegap):
         color_list.append(slice_color)
         ax.plot(yax_cut, slice_shifted, c=slice_color)
 
-        y_cog = circmean(yax_cut, weights=slice_norm)
+        y_cog = circmean(yax_cut, w=slice_norm)
         slice_point = slice_shifted[np.argmin(np.abs(cdiff(yax_cut, y_cog)))]
         marker, m_c = '.', 'k'
         ax.scatter(y_cog, slice_point, marker=marker, c=[m_c], zorder=3.1)
@@ -252,4 +253,136 @@ def customlegend(ax, handlelength=1.2, linewidth=1.2, **kwargs):
               borderpad=0.1, frameon=False, **kwargs)
     for legobj in leg.legendHandles:
         legobj.set_linewidth(linewidth)
+    return ax
+
+
+
+
+def plot_prefer_nonprefer(ax, prefer_pdf, nonprefer_pdf):
+    '''
+
+    Parameters
+    ----------
+    ax: ndarray
+        Numpy array of axes objects with shape (6, ).
+        ax[0] - Fraction of negative slope
+        ax[1] - Prefer's precession
+        ax[2] - Nonprefer's precession
+        ax[3] - Difference in onsets for Prefer and Nonprefer
+        ax[4] - Difference in slopes for Prefer and Nonprefer
+        ax[5] - Difference in phases for Prefer and Nonprefer
+
+    prefer_pdf: dataframe
+        Pandas dataframe containing prefered passes (including non-precessing)
+    nonprefer_pdf: dataframe
+        Pandas dataframe containing nonprefered passes (including non-precessing)
+
+    Returns
+    -------
+    '''
+    pre_c = dict(prefer='r', nonprefer='b')
+    prefer_allslope = prefer_pdf['slope'].to_numpy()
+    nonprefer_allslope = nonprefer_pdf['slope'].to_numpy()
+    prefer_slope = prefer_pdf[prefer_pdf['precess_exist']]['slope'].to_numpy() * np.pi
+    nonprefer_slope = nonprefer_pdf[nonprefer_pdf['precess_exist']]['slope'].to_numpy() * np.pi
+    prefer_onset = prefer_pdf[prefer_pdf['precess_exist']]['onset'].to_numpy()
+    nonprefer_onset = nonprefer_pdf[nonprefer_pdf['precess_exist']]['onset'].to_numpy()
+    prefer_dsp = np.concatenate(prefer_pdf[prefer_pdf['precess_exist']]['dsp'].to_list())
+    nonprefer_dsp = np.concatenate(nonprefer_pdf[nonprefer_pdf['precess_exist']]['dsp'].to_list())
+    prefer_phasesp = np.concatenate(prefer_pdf[prefer_pdf['precess_exist']]['phasesp'].to_list())
+    nonprefer_phasesp = np.concatenate(nonprefer_pdf[nonprefer_pdf['precess_exist']]['phasesp'].to_list())
+
+
+    # Precession fraction
+    prefer_neg_n, prefer_pos_n = (prefer_allslope<0).sum(), (prefer_allslope>0).sum()
+    nonprefer_neg_n, nonprefer_pos_n = (nonprefer_allslope<0).sum(), (nonprefer_allslope>0).sum()
+    table_arr = np.array([[prefer_neg_n, prefer_pos_n], [nonprefer_neg_n, nonprefer_pos_n] ])
+    table_df = pd.DataFrame(table_arr, columns=['-ve', '+ve'], index=['Prefer', 'Nonprefer'])
+    p_frac = fisherexact(table_arr)
+    prefer_frac = prefer_neg_n/(prefer_pos_n+prefer_neg_n)
+    nonprefer_frac = nonprefer_neg_n/(nonprefer_pos_n+nonprefer_neg_n)
+    bar_w, bar_x, bar_y = 0.5, np.array([0, 1]), np.array([prefer_frac, nonprefer_frac])
+    ax[0].bar(bar_x, bar_y, width=bar_w)
+    ax[0].errorbar(x=bar_x.mean(), y=0.8, xerr=1, c='k', capsize=2.5)
+    ax[0].text(x=0, y=0.85, s='p%s'%(p2str(p_frac)), fontsize=legendsize)
+    ax[0].set_xticks([0, 1])
+    ax[0].set_xticklabels(['Prefer', 'Nonprefer'])
+    ax[0].tick_params(labelsize=fontsize)
+
+    # Prefer precession
+    xdum = np.linspace(0, 1, 10)
+    mean_phasesp = circmean(prefer_phasesp)
+    regress = rcc(prefer_dsp, prefer_phasesp)
+    ydum = regress['phi0'] + xdum * 2*np.pi * regress['aopt']
+    ax[1].scatter(prefer_dsp, prefer_phasesp, marker='.', c='gray', s=1)
+    ax[1].scatter(prefer_dsp, prefer_phasesp + 2*np.pi, marker='.', c='gray', s=1)
+    ax[1].plot(xdum, ydum, c='k')
+    ax[1].plot(xdum, ydum+2*np.pi, c='k')
+    ax[1].plot(xdum, ydum+2*np.pi, c='k')
+    ax[1].axhline(mean_phasesp, xmin=0, xmax=0.1, color='r')
+    ax[1].set_ylim(-np.pi, 3*np.pi)
+    ax[1].set_xlim(0, 1)
+
+    # Non-Prefer precession
+    xdum = np.linspace(0, 1, 10)
+    mean_phasesp = circmean(nonprefer_phasesp)
+    regress = rcc(nonprefer_dsp, nonprefer_phasesp)
+    ydum = regress['phi0'] + xdum * 2*np.pi * regress['aopt']
+    ax[2].scatter(nonprefer_dsp, nonprefer_phasesp, marker='.', c='gray', s=1)
+    ax[2].scatter(nonprefer_dsp, nonprefer_phasesp + 2*np.pi, marker='.', c='gray', s=1)
+    ax[2].plot(xdum, ydum, c='k')
+    ax[2].plot(xdum, ydum+2*np.pi, c='k')
+    ax[2].plot(xdum, ydum+2*np.pi, c='k')
+    ax[2].axhline(mean_phasesp, xmin=0, xmax=0.1, color='r')
+    ax[2].set_ylim(-np.pi, 3*np.pi)
+    ax[2].set_xlim(0, 1)
+
+    # Onset vs Slope
+    p_onset, _ = watson_williams(prefer_onset, nonprefer_onset)
+    _, p_slope = ranksums(prefer_slope, nonprefer_slope)
+    ax[3].scatter(prefer_slope, prefer_onset, marker='o', c=pre_c['prefer'], label='prefer')
+    ax[3].scatter(nonprefer_slope, nonprefer_onset, marker='x', c=pre_c['nonprefer'], label='nonprefer')
+    ax[3].set_xlabel('Precession slope (rad)')
+    ax[3].set_ylabel('Precession onset (rad)')
+    customlegend(ax[3], fontsize=legendsize)
+
+    # # Onset
+    # p_onset, _ = watson_williams(prefer_onset, nonprefer_onset)
+    # onset_bins = np.linspace(0, 2*np.pi, 20)
+    # prefer_onsetbins, _ = np.histogram(prefer_onset, bins=onset_bins)
+    # nonprefer_onsetbins, _ = np.histogram(nonprefer_onset, bins=onset_bins)
+    # ax[3].step(onset_bins[:-1], prefer_onsetbins/prefer_onsetbins.sum(), where='pre', c=pre_c['prefer'], label='prefer')
+    # ax[3].step(onset_bins[:-1], nonprefer_onsetbins/nonprefer_onsetbins.sum(), where='pre', c=pre_c['nonprefer'], label='nonprefer')
+    # ax[3].annotate('Watson-William\np%s'%(p2str(p_onset)), xy=(0.6, 0.6), xycoords='axes fraction')
+    # ax[3].set_xlabel('Precession onset (rad)')
+    # customlegend(ax[3], fontsize=legendsize)
+    #
+    # # Slope
+    # _, p_slope = ranksums(prefer_slope, nonprefer_slope)
+    # slope_bins = np.linspace(-2*np.pi, 0, 20)
+    # prefer_slopebins, _ = np.histogram(prefer_slope, bins=slope_bins)
+    # nonprefer_slopebins, _ = np.histogram(nonprefer_slope, bins=slope_bins)
+    # ax[4].step(slope_bins[:-1], prefer_slopebins/prefer_slopebins.sum(), where='pre', c=pre_c['prefer'], label='prefer')
+    # ax[4].step(slope_bins[:-1], nonprefer_slopebins/nonprefer_slopebins.sum(), where='pre', c=pre_c['nonprefer'], label='nonprefer')
+    # ax[4].annotate('Ranksums\np%s'%(p2str(p_slope)), xy=(0.6, 0.6), xycoords='axes fraction')
+    # ax[4].set_xlabel('Precession slope (rad)')
+    # customlegend(ax[4], fontsize=legendsize)
+
+    # Spike phase
+    prefer_phasesp_mean, nonprefer_phasesp_mean = circmean(prefer_phasesp), circmean(nonprefer_phasesp)
+    p_phasesp, _ = watson_williams(prefer_phasesp, nonprefer_phasesp)
+    phasesp_bins = np.linspace(-np.pi, np.pi, 20)
+    prefer_phasespbins, _ = np.histogram(prefer_phasesp, bins=phasesp_bins)
+    nonprefer_phasespbins, _ = np.histogram(nonprefer_phasesp, bins=phasesp_bins)
+    norm_preferphasebins = prefer_phasespbins/prefer_phasespbins.sum()
+    norm_nonpreferphasebins = nonprefer_phasespbins/nonprefer_phasespbins.sum()
+    maxl = max(norm_preferphasebins.max(), norm_nonpreferphasebins.max())
+    ax[4].step(midedges(phasesp_bins), norm_preferphasebins, color='r', label='prefer')
+    ax[4].step(midedges(phasesp_bins), norm_nonpreferphasebins, color='b', label='nonprefer')
+    ax[4].scatter(prefer_phasesp_mean, maxl*1.1, color='r', marker='|', s=64)
+    ax[4].scatter(nonprefer_phasesp_mean, maxl*1.1, color='b', marker='|', s=64)
+    ax[4].annotate('Watson-William\np%s'%(p2str(p_phasesp)), xy=(0.6, 0.2), xycoords='axes fraction')
+    ax[4].set_xlabel('Precession spike phase')
+    customlegend(ax[4], fontsize=legendsize)
+
     return ax
