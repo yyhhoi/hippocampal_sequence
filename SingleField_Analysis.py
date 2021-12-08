@@ -8,42 +8,71 @@ import matplotlib.pyplot as plt
 import os
 
 from matplotlib import cm
-from pycircstat import vtest, watson_williams
+from pycircstat import vtest
 from pycircstat.descriptive import cdiff
 from pycircstat.descriptive import mean as circmean
-from scipy.stats import chi2_contingency, binom_test, linregress, spearmanr
+from scipy.stats import binom_test, linregress, spearmanr
 
 from common.linear_circular_r import rcc
-from common.stattests import p2str, stat_record, wwtable2text, my_chi_2way, my_kruskal_2samp, my_kruskal_3samp, \
-    fdr_bh_correction, my_ww_2samp, my_fisher_2way
-from common.comput_utils import fisherexact, ranksums, linear_circular_gauss_density, unfold_binning_2d, midedges, \
-    shiftcyc_full2half, repeat_arr, circ_ktest, get_numpass_at_angle
+from common.stattests import p2str, stat_record, my_chi_2way, my_kruskal_2samp, my_kruskal_3samp, \
+    fdr_bh_correction, my_ww_2samp, my_fisher_2way, circ_ktest
+from common.comput_utils import linear_circular_gauss_density, unfold_binning_2d, midedges, \
+    shiftcyc_full2half, repeat_arr, get_numpass_at_angle
 
 from common.visualization import customlegend, plot_marginal_slices
 
-from common.script_wrappers import DirectionalityStatsByThresh, permutation_test_arithmetic_average_slopeoffset,\
-    compute_precessangle
+from common.script_wrappers import DirectionalityStatsByThresh, compute_precessangle
 from common.shared_vars import fontsize, ticksize, legendsize, titlesize, ca_c, dpi, total_figw
 
 def omniplot_singlefields(expdf, save_dir=None):
-    linew = 0.75
-
-    # Initialization of stats
+    # # Initialization of stats
     stat_fn = 'fig1_single_directionality.txt'
     stat_record(stat_fn, True)
 
-    # Initialization of figures
-    fig = plt.figure(figsize=(total_figw, total_figw / 2))
+    # # Initialization of figures
+    fullcol_figw = 6.3
+    main_w = fullcol_figw * 0.7
+    frac_w = fullcol_figw * 0.3
+    total_figh = fullcol_figw/2
     xgap_direct_frac = 0.05
     axdirect_w = (1 - xgap_direct_frac) / 4
-    axdirect_h = 1 / 2
+    axdirect_h = 1/3
     xsqueeze_all = 0.075
-    ysqueeze_all = 0.2
-
+    ysqueeze_all = 0.15
     btw_CAs_xsqueeze = 0.05
     direct_xoffset = 0.05
+    fig = plt.figure(figsize=(fullcol_figw, total_figh), dpi=dpi, facecolor='w')
 
-    ax_directR_y = 1 - axdirect_h
+    # Axes for R population
+    xshorten_popR = 0.025
+    ax_popR_y = 1 - 1/3
+    ax_popR_w = axdirect_w - xsqueeze_all - xshorten_popR
+    ax_popR = np.array([
+        fig.add_axes(
+            [0 + xsqueeze_all / 2 + btw_CAs_xsqueeze + direct_xoffset, ax_popR_y + ysqueeze_all / 2,
+             ax_popR_w, axdirect_h - ysqueeze_all]),
+        fig.add_axes(
+            [axdirect_w + xsqueeze_all / 2 + direct_xoffset, ax_popR_y + ysqueeze_all / 2,
+             ax_popR_w, axdirect_h - ysqueeze_all]),
+        fig.add_axes(
+            [axdirect_w * 2 + xsqueeze_all / 2 - btw_CAs_xsqueeze + direct_xoffset, ax_popR_y + ysqueeze_all / 2,
+             ax_popR_w, axdirect_h - ysqueeze_all]),
+    ])
+
+    ax_popR_den = np.array([
+        fig.add_axes(
+            [0 + xsqueeze_all / 2 + btw_CAs_xsqueeze + direct_xoffset + ax_popR_w, ax_popR_y + ysqueeze_all / 2,
+             xshorten_popR, axdirect_h - ysqueeze_all]),
+        fig.add_axes(
+            [axdirect_w + xsqueeze_all / 2 + direct_xoffset + ax_popR_w, ax_popR_y + ysqueeze_all / 2,
+             xshorten_popR, axdirect_h - ysqueeze_all]),
+        fig.add_axes(
+            [axdirect_w * 2 + xsqueeze_all / 2 - btw_CAs_xsqueeze + direct_xoffset + ax_popR_w, ax_popR_y + ysqueeze_all / 2,
+             xshorten_popR, axdirect_h - ysqueeze_all]),
+    ])
+
+    axdirect_yoffset = 0
+    ax_directR_y = 1 - 2/3 + axdirect_yoffset
     ax_directR = np.array([
         fig.add_axes([0 + xsqueeze_all / 2 + btw_CAs_xsqueeze + direct_xoffset, ax_directR_y + ysqueeze_all / 2,
                       axdirect_w - xsqueeze_all, axdirect_h - ysqueeze_all]),
@@ -55,8 +84,8 @@ def omniplot_singlefields(expdf, save_dir=None):
              axdirect_w - xsqueeze_all, axdirect_h - ysqueeze_all]),
     ])
 
-    axdirectfrac_yoffset = 0.125
-    axdirectfrac_y = 1 - axdirect_h * 2 + axdirectfrac_yoffset
+    axdirectfrac_yoffset = 0.10
+    axdirectfrac_y =1 - (3/3) + axdirectfrac_yoffset
     ax_directFrac = np.array([
         fig.add_axes([0 + xsqueeze_all / 2 + btw_CAs_xsqueeze + direct_xoffset, axdirectfrac_y + ysqueeze_all / 2,
                       axdirect_w - xsqueeze_all, axdirect_h - ysqueeze_all]),
@@ -67,22 +96,28 @@ def omniplot_singlefields(expdf, save_dir=None):
              axdirect_w - xsqueeze_all, axdirect_h - ysqueeze_all]),
     ])
 
+    axfrac_h, ysqueeze_axfrac = 1/2, 0.15
+    axfrac_yoffset, axfrac_ygap = 0.05, 0.05
     axfrac_x = axdirect_w * 3 + xgap_direct_frac
+    axfrac_y1, axfrac_y2 = 1 - axfrac_h - axfrac_ygap + axfrac_yoffset, 1 - axfrac_h*2 + axfrac_ygap + axfrac_yoffset
     ax_frac = np.array([
-        fig.add_axes([axfrac_x + xsqueeze_all / 2, ax_directR_y + ysqueeze_all / 2, axdirect_w - xsqueeze_all,
-                      axdirect_h - ysqueeze_all]),
-        fig.add_axes([axfrac_x + xsqueeze_all / 2, axdirectfrac_y + ysqueeze_all / 2, axdirect_w - xsqueeze_all,
-                      axdirect_h - ysqueeze_all]),
+        fig.add_axes([axfrac_x + xsqueeze_all / 2, axfrac_y1 + ysqueeze_axfrac / 2, axdirect_w - xsqueeze_all,
+                      axfrac_h - ysqueeze_axfrac]),
+        fig.add_axes([axfrac_x + xsqueeze_all / 2, axfrac_y2 + ysqueeze_axfrac / 2, axdirect_w - xsqueeze_all,
+                      axfrac_h - ysqueeze_axfrac]),
     ])
 
-    ax = np.stack([ax_directR, ax_directFrac])
+    ax = np.stack([ax_popR, ax_directR, ax_directFrac])
 
-    figl = total_figw / 4
+    figl = fullcol_figw / 4
     fig_pval, ax_pval = plt.subplots(2, 1, figsize=(figl * 4, figl * 4))
 
     # Initialization of parameters
-    spike_threshs = np.arange(0, 401, 20)
+    linew = 0.75
+    popR_B_c, popR_B_mark, popR_NB_c, popR_NB_mark = 'teal', '.', 'goldenrod', '.'
+    spike_threshs = np.arange(0, 401, 20)  # Original
     stats_getter = DirectionalityStatsByThresh('num_spikes', 'rate_R_pval', 'rate_R')
+    redges = np.arange(0, 1.05, 0.1)
 
     # # Plot data
     data_dict = {'CA%d' % (i): dict() for i in range(1, 4)}
@@ -98,26 +133,31 @@ def omniplot_singlefields(expdf, save_dir=None):
         data_dict[ca]['nonborder'] = sdict_nb
 
         # Plot
-        ax[0, caid].plot(spike_threshs, sdict_all['medianR'], c=ca_c[ca], label='All', linewidth=linew)
-        ax[0, caid].plot(spike_threshs, sdict_b['medianR'], linestyle='dotted', c=ca_c[ca], label='B', linewidth=linew)
-        ax[0, caid].plot(spike_threshs, sdict_nb['medianR'], linestyle='dashed', c=ca_c[ca], label='N-B',
-                         linewidth=linew)
-        ax[0, caid].set_title(ca, fontsize=titlesize)
-
-        ax[1, caid].plot(spike_threshs, sdict_all['sigfrac_shift'], c=ca_c[ca], label='All', linewidth=linew)
-        ax[1, caid].plot(spike_threshs, sdict_b['sigfrac_shift'], linestyle='dotted', c=ca_c[ca], label='B',
-                         linewidth=linew)
-        ax[1, caid].plot(spike_threshs, sdict_nb['sigfrac_shift'], linestyle='dashed', c=ca_c[ca], label='N-B',
-                         linewidth=linew)
+        ax_popR[caid].scatter(x=cadf_b['num_spikes'], y=cadf_b['rate_R'], c=popR_B_c, s=0.1, marker=popR_B_mark, alpha=0.7)
+        ax_popR[caid].scatter(x=cadf_nb['num_spikes'], y=cadf_nb['rate_R'], c=popR_NB_c, s=0.1, marker=popR_NB_mark, alpha=0.7)
+        ax_popR[caid].set_title(ca, fontsize=titlesize)
+        ax_popR_den[caid].hist(cadf_b['rate_R'], bins=redges, orientation='horizontal', histtype='step', density=True, color=popR_B_c, linewidth=linew)
+        ax_popR_den[caid].hist(cadf_nb['rate_R'], bins=redges, orientation='horizontal', histtype='step', density=True, color=popR_NB_c, linewidth=linew)
+        ax_popR[caid].axvspan(xmin=0, xmax=40, color='0.9', zorder=0)
+        ax_directR[caid].plot(spike_threshs, sdict_all['medianR'], c=ca_c[ca], label='All', linewidth=linew)
+        ax_directR[caid].plot(spike_threshs, sdict_b['medianR'], linestyle='dotted', c=ca_c[ca], label='B', linewidth=linew)
+        ax_directR[caid].plot(spike_threshs, sdict_nb['medianR'], linestyle='dashed', c=ca_c[ca], label='N-B',
+                              linewidth=linew)
+        ax_directFrac[caid].plot(spike_threshs, sdict_all['sigfrac_shift'], c=ca_c[ca], label='All', linewidth=linew)
+        ax_directFrac[caid].plot(spike_threshs, sdict_b['sigfrac_shift'], linestyle='dotted', c=ca_c[ca], label='B',
+                                 linewidth=linew)
+        ax_directFrac[caid].plot(spike_threshs, sdict_nb['sigfrac_shift'], linestyle='dashed', c=ca_c[ca], label='N-B',
+                                 linewidth=linew)
 
         ax_frac[0].plot(spike_threshs, sdict_all['datafrac'], c=ca_c[ca], label=ca, linewidth=linew)
         ax_frac[1].plot(spike_threshs, sdict_b['n'] / sdict_all['n'], c=ca_c[ca], label=ca, linewidth=linew)
 
         # Binomial test for all fields
-        signum_all, n_all = sdict_all['shift_signum'][0], sdict_all['n'][0]
-        p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
-        stat_txt = '%s, Binomial test, greater than p=0.05, %d/%d=%0.4f, $p=%s$' % (ca, signum_all, n_all, signum_all/n_all, p2str(p_binom))
-        stat_record(stat_fn, False, stat_txt)
+        for idx, ntresh in enumerate(spike_threshs):
+            signum_all, n_all = sdict_all['shift_signum'][idx], sdict_all['n'][idx]
+            p_binom = binom_test(signum_all, n_all, p=0.05, alternative='greater')
+            stat_txt = '%s, Thresh=%d, Binomial test, greater than p=0.05, %d/%d=%0.4f, $p=%s$' % (ca, ntresh, signum_all, n_all, signum_all/n_all, p2str(p_binom))
+            stat_record(stat_fn, False, stat_txt)
 
 
     # # Statistical test
@@ -167,7 +207,7 @@ def omniplot_singlefields(expdf, save_dir=None):
             cafirst, casecond = 'CA%d'%(canum1), 'CA%d'%(canum2)
             cadictfirst, cadictsecond = data_dict[cafirst][bcase], data_dict[casecond][bcase]
             contin_btwca = pd.DataFrame({cafirst: [cadictfirst['shift_signum'][idx], cadictfirst['shift_nonsignum'][idx]],
-                                     casecond: [cadictsecond['shift_signum'][idx], cadictsecond['shift_nonsignum'][idx]]}).to_numpy()
+                                         casecond: [cadictsecond['shift_signum'][idx], cadictsecond['shift_nonsignum'][idx]]}).to_numpy()
             chi_pbtwca, _, txt_chibtwca = my_chi_2way(contin_btwca)
             fish_pbtwca, _, fishtxt_btwca = my_fisher_2way(contin_btwca)
             stat_record(stat_fn, False, "Between CAs, Significant fraction, %s vs %s: %s, %s" % (cafirst, casecond, txt_chibtwca, fishtxt_btwca))
@@ -206,68 +246,85 @@ def omniplot_singlefields(expdf, save_dir=None):
     customlegend(ax_pval[1], fontsize=legendsize)
 
     # # Asthestics of plotting
-    customlegend(ax[0, 0], linewidth=1.2, fontsize=legendsize, bbox_to_anchor=[0.75, 0.8], loc='center')
+    # ax_popR
+    ax_popR[0].scatter(-1, -1, c=popR_B_c, marker=popR_B_mark, label='B', s=8)
+    ax_popR[0].scatter(-1, -1, c=popR_NB_c, marker=popR_NB_mark, label='N-B', s=8)
+    ax_popR[0].set_ylabel('R', fontsize=fontsize)
+    customlegend(ax_popR[0], linewidth=1.2, fontsize=legendsize, bbox_to_anchor=[0.75, 0.8], loc='center')
+    ax_popR[1].set_xlabel('Spike count', fontsize=fontsize)
+    for ax_i, ax_popR_each in enumerate(ax_popR):
+        ax_popR_each.set_xlim(0, 1000)
+        ax_popR_each.set_xticks(np.arange(0, 801, 400))
+        ax_popR_each.set_xticks(np.arange(0, 801, 200), minor=True)
+        ax_popR_each.set_ylim(0, 1)
+        ax_popR_each.set_yticks(np.arange(0, 1.1, 0.5))
+        if ax_i == 0:
+            ax_popR_each.set_yticklabels(['0', '', '1'])
+        else:
+            ax_popR_each.set_yticklabels(['', '', ''])
+        ax_popR_each.set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+
+    # ax_popR_den
+    for i in range(3):
+        ax_popR_den[i].set_ylim(0, 1)
+        ax_popR_den[i].axis('off')
+
+    # ax_directR
+    ax_directR[0].set_ylabel('Median R', fontsize=fontsize)
+    customlegend(ax_directR[0], linewidth=1.2, fontsize=legendsize, bbox_to_anchor=[0.75, 0.8], loc='center')
+    for i in range(3):
+        ax_directR[i].set_xticks([0, 100, 200, 300, 400])
+        ax_directR[i].set_xticklabels([''] * 5)
+        ax_directR[i].set_xlim(0, 400)
+        ax_directR[i].set_ylim(0.05, 0.25)
+        ax_directR[i].set_yticks([0.1, 0.2])
+        ax_directR[i].set_yticks([0.05, 0.1, 0.15, 0.2, 0.25], minor=True)
+        if i != 0:
+            ax_directR[i].set_yticklabels(['']*2)
+
+    # ax_directFrac
+    ax_directFrac[0].set_ylabel('Significant\n Fraction', fontsize=fontsize)
+    ax_directFrac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
+    for i in range(3):
+        ax_directFrac[i].set_xticks([0, 100, 200, 300, 400])
+        ax_directFrac[i].set_xticklabels(['0', '', '', '', '400'])
+        ax_directFrac[i].set_yticks([0, 0.1, 0.2, 0.3, 0.4])
+        if i != 0:
+            ax_directFrac[i].set_yticklabels(['']*5)
+
+    # ax_frac
+    ax_frac[0].set_xticks([0, 100, 200, 300, 400])
+    ax_frac[0].set_xticklabels([''] * 5)
+    ax_frac[0].set_ylabel('All fields\nfraction', fontsize=fontsize)
     customlegend(ax_frac[0], handlelength=0.5, linewidth=1.2, fontsize=legendsize, bbox_to_anchor=[0.75, 0.8],
                  loc='center')
+    ax_frac[1].set_xticks([0, 100, 200, 300, 400])
+    ax_frac[1].set_xticklabels(['0', '', '', '', '400'])
+    ax_frac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
+    ax_frac[1].set_ylabel('Border fields\nfraction', fontsize=fontsize)
+    for i in range(3):
+        if i < 2:
+            ax_frac[i].set_yticks([0, 0.5, 1])
+            ax_frac[i].set_yticks(np.arange(0, 1.1, 0.1), minor=True)
+            ax_frac[i].set_yticklabels(['0', '', '1'])
 
-    ax[0, 0].set_ylabel('Median R', fontsize=fontsize)
-    ax[1, 0].set_ylabel('Significant\n Fraction', fontsize=fontsize)
-    for i in range(2):  # loop for rows
+    # All plots
+    for i in range(3):
         ax[i, 1].set_ylabel('')
         ax[i, 2].set_ylabel('')
 
-    ax_frac[0].set_title(' ', fontsize=titlesize)
-    ax_frac[0].set_ylabel('All fields\nfraction', fontsize=fontsize)
-    ax_frac[1].set_ylabel('Border fields\nfraction', fontsize=fontsize)
-
-    for ax_each in np.concatenate([ax.ravel(), ax_frac]):
+    for ax_each in np.concatenate([ax.ravel(), ax_popR_den, ax_frac]):
         ax_each.spines['top'].set_visible(False)
         ax_each.spines['right'].set_visible(False)
         ax_each.tick_params(labelsize=ticksize)
 
-    for i in range(3):
-        ax[0, i].set_xticks([0, 100, 200, 300, 400])
-        ax[0, i].set_xticklabels([''] * 5)
-        ax[1, i].set_xticks([0, 100, 200, 300, 400])
-        ax[1, i].set_xticklabels(['0', '', '', '', '400'])
-    ax_frac[0].set_xticks([0, 100, 200, 300, 400])
-    ax_frac[0].set_xticklabels([''] * 5)
-    ax_frac[1].set_xticks([0, 100, 200, 300, 400])
-    ax_frac[1].set_xticklabels(['0', '', '', '', '400'])
-
-    # yticks
-    for i in range(3):
-        yticks = [0.1, 0.2]
-        ax_directR[i].set_ylim(0.05, 0.25)
-        ax_directR[i].set_yticks(yticks)
-        ax_directR[i].set_yticks([0.05, 0.1, 0.15, 0.2, 0.25], minor=True)
-        if i != 0:
-            ax_directR[i].set_yticklabels([''] * len(yticks))
-
-        yticks = [0, 0.1, 0.2, 0.3, 0.4]
-        ax_directFrac[i].set_yticks(yticks)
-        # ax_directFrac[i].set_yticks(np.arange(0, 0.6, 0.1), minor=True)
-        if i != 0:
-            ax_directFrac[i].set_yticklabels([''] * len(yticks))
-    ax_directFrac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
-
-
-
-    for ax_each in ax_frac:
-        ax_each.set_yticks([0, 0.5, 1])
-        ax_each.set_yticks(np.arange(0, 1.1, 0.1), minor=True)
-        ax_each.set_yticklabels(['0', '', '1'])
-
-    # ax_directFrac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
-    ax_frac[1].set_xlabel('Spike count\nthreshold', ha='center', fontsize=fontsize)
-
-    fig_pval.tight_layout()
     fig.savefig(os.path.join(save_dir, 'exp_single_directionality.png'), dpi=dpi)
-    fig.savefig(os.path.join(save_dir, 'exp_single_directionality.eps'), dpi=dpi)
+    fig.savefig(os.path.join(save_dir, 'exp_single_directionality.pdf'), dpi=dpi)
+    fig_pval.tight_layout()
     fig_pval.savefig(os.path.join(save_dir, 'exp_single_TestSignificance.png'), dpi=dpi)
 
 
-def plot_precession_examples(singledf, save_dir):
+def plot_precession_examples(df, axpeg):
     def plot_precession(ax, d, phase, rcc_m, rcc_c, marker_size, color):
         ax.scatter(np.concatenate([d, d]), np.concatenate([phase, phase + 2 * np.pi]), marker='.',
                    s=marker_size, c=color)
@@ -277,28 +334,29 @@ def plot_precession_examples(singledf, save_dir):
         ax.plot(xdum, ydum, c='k', linewidth=0.8)
         ax.plot(xdum, ydum + 2 * np.pi, c='k', linewidth=0.8)
         ax.plot(xdum, ydum - 2 * np.pi, c='k', linewidth=0.8)
-        ax.set_yticks([-np.pi, 0, np.pi, 2 * np.pi, 3 * np.pi])
-        ax.set_yticklabels(['', '0', '', '2$\pi$', ''])
+        ax.set_yticks([0, 2 * np.pi])
+        ax.set_yticklabels(['0', '2$\pi$'])
         ax.tick_params(axis='both', which='major', labelsize=ticksize)
+        ax.set_yticks([-np.pi, np.pi, 3 * np.pi], minor=True)
         ax.set_xlim(0, 1)
         ax.set_ylim(-np.pi, 3 * np.pi)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         return ax
 
-    figl = total_figw * 0.4
-
-    id_list = []
-
-    fig, ax = plt.subplots(4, 3, figsize=(figl, figl * (4 / 3) * 0.8), sharex=True, sharey=True)
 
     # # Assign field ids within ca
-    for caid, (ca, cadf) in enumerate(singledf.groupby('ca')):
+    id_list = []
+    animal_list = []
+    for caid, (ca, cadf) in enumerate(df.groupby('ca')):
         cadf = cadf.reset_index(drop=True)
 
         num_fields = cadf.shape[0]
 
         for nf in range(num_fields):
+            animal, nunit = cadf.loc[nf, ['animal', 'nunit']]
+            if animal in animal_list:
+                continue
             allprecess_df, fieldid_ca = cadf.loc[nf, ['precess_df', 'fieldid_ca']]
             precess_df = allprecess_df[(allprecess_df['precess_exist']) & (allprecess_df['pass_nspikes']>5)].reset_index(drop=True)
             num_precess = precess_df.shape[0]
@@ -314,47 +372,46 @@ def plot_precession_examples(singledf, save_dir):
             phasesp_all = np.concatenate(phasesplist)
             regress = rcc(dsp_all, phasesp_all)
             rcc_m, rcc_c, rcc_rho, rcc_p = regress['aopt'], regress['phi0'], regress['rho'], regress['p']
-            plot_precession(ax[0, caid], dsp_all, phasesp_all, rcc_m, rcc_c, 1, color=ca_c[ca])
+            if rcc_m > -0.4:
+                continue
+            plot_precession(axpeg[0, caid], dsp_all, phasesp_all, rcc_m, rcc_c, 1, color=ca_c[ca])
+
 
             np.random.seed(1)
             precessids = np.random.choice(num_precess, size=3)
             for axid, precessid in enumerate(precessids):
                 dsp, phasesp, rcc_m, rcc_c = precess_df.loc[precessid, ['dsp', 'phasesp', 'rcc_m', 'rcc_c']]
-                plot_precession(ax[axid + 1, caid], dsp, phasesp, rcc_m, rcc_c, 4, color=ca_c[ca])
+                plot_precession(axpeg[axid + 1, caid], dsp, phasesp, rcc_m, rcc_c, 4, color=ca_c[ca])
             id_list.append(fieldid_ca)
-            ax[0, caid].set_title('%s#%d' % (ca, fieldid_ca), fontsize=fontsize)
+            axpeg[0, caid].set_title('%s' % (ca), fontsize=fontsize, pad=11)
+            axpeg[0, caid].annotate('rat%s,unit%d'%(animal[3:], nunit), xy=(-0.05, 1.1), xycoords='axes fraction', fontsize=fontsize-3)
+            animal_list.append(animal)
 
             break
 
-    ax[3, 1].set_xticks([0, 1])
-    # plt.setp(ax[3, 0].get_xticklabels(), visible=False)
-    # plt.setp(ax[3, 2].get_xticklabels(), visible=False)
-    fig.text(0.03, 0.35, 'Phase (rad)', ha='center', rotation=90, fontsize=fontsize)
-    fig.text(0.55, 0.02, 'Position', ha='center', fontsize=fontsize)
-    fig.tight_layout()
-    fig.subplots_adjust(wspace=0.2, hspace=0.2)
-    fig.savefig(os.path.join(save_dir, 'precess_examples.png'), dpi=dpi)
-    fig.savefig(os.path.join(save_dir, 'precess_examples.eps'), dpi=dpi)
+    axpeg[3, 1].set_xticks([0, 1])
 
 
-def plot_field_bestprecession(df, save_dir):
-    figl = total_figw * 0.6
+    for rowi in range(4):
+        plt.setp(axpeg[rowi, 1].get_yticklabels(), visible=False)
+        plt.setp(axpeg[rowi, 2].get_yticklabels(), visible=False)
+    for coli in range(3):
+        for rowi in range(3):
+            plt.setp(axpeg[rowi, coli].get_xticklabels(), visible=False)
+
+
+def plot_field_bestprecession(df, ax_pishift, axR):
+
     linew = 0.75
-    R_figl = total_figw * 0.4
+
     nap_thresh = 1
 
     print('Plot field best precession')
     stat_fn = 'fig2_field_precess.txt'
     stat_record(stat_fn, True)
-    fig_negslope, ax_negslope = plt.subplots(figsize=(R_figl * 0.8, R_figl * 0.5))
-    fig_R, ax_R = plt.subplots(figsize=(R_figl * 0.8, R_figl * 0.5))
-    fig_pishift = plt.figure(figsize=(figl, figl * 4 / 3))
-    ax_pishift = np.array([
-        [fig_pishift.add_subplot(4, 3, i) for i in range(1, 4)],
-        [fig_pishift.add_subplot(4, 3, i) for i in range(4, 7)],
-        [fig_pishift.add_subplot(4, 3, i, polar=True) for i in range(7, 10)],
-        [fig_pishift.add_subplot(4, 3, i, polar=True) for i in range(10, 13)]
-    ])
+
+
+
 
     allR = []
     allca_ntotal = df.shape[0]
@@ -405,11 +462,11 @@ def plot_field_bestprecession(df, save_dir):
         xdum = np.linspace(adm.min(), adm.max(), 10)
         linew_ax0 = 0.6
         ax_pishift[0, 0].step(adm, precess_bins / precess_bins.sum(), color=ca_c[ca], linewidth=linew_ax0,
-                              label=ca)
-        ax_pishift[0, 1].step(adm, spike_bins / spike_bins.sum(), color=ca_c[ca], linewidth=linew_ax0)
-        ax_pishift[0, 2].step(adm, norm_bins / norm_bins.sum(), color=ca_c[ca], linewidth=linew_ax0)
-        ax_pishift[0, 2].plot(xdum, xdum * pm + pc, linewidth=linew_ax0, color=ca_c[ca])
-        ax_pishift[0, 2].text(0, 0.0525 - caid * 0.0075, 'p=%s' % (p2str(pval)), fontsize=legendsize, color=ca_c[ca])
+                              label=ca, alpha=0.7)
+        ax_pishift[0, 1].step(adm, spike_bins / spike_bins.sum(), color=ca_c[ca], linewidth=linew_ax0, alpha=0.7)
+        ax_pishift[0, 2].step(adm, norm_bins / norm_bins.sum(), color=ca_c[ca], linewidth=linew_ax0, alpha=0.7)
+        ax_pishift[0, 2].plot(xdum, xdum * pm + pc, linewidth=linew_ax0, color=ca_c[ca], alpha=0.7)
+        ax_pishift[0, 2].annotate('p=%s' % (p2str(pval)), xy=(0.1, 0.9 - caid*0.12), xycoords='axes fraction', fontsize=legendsize, color=ca_c[ca])
 
         stat_record(stat_fn, False, "%s Spearman's correlation: $r_{s(%d)}=%0.2f, p=%s$, Pearson's: m=%0.2f, $r=%0.2f, p=%s$ " % \
                     (ca, precess_allcount, rho, p2str(pval), pm, pr, p2str(ppval)))
@@ -421,24 +478,24 @@ def plot_field_bestprecession(df, save_dir):
         for edgei in range(adiff_bins.shape[0] - 1):
             idxtmp = np.where((all_adiff > adiff_bins[edgei]) & (all_adiff <= adiff_bins[edgei + 1]))[0]
             frac_N[edgei] = (all_slopes[idxtmp] < 0).mean()
-        ax_negslope.plot(adm, frac_N, c=ca_c[ca], linewidth=0.75, label=ca)
-        ax_negslope.set_xlabel(r'$\theta_{pass}$' + ' (rad)', fontsize=fontsize)
-        ax_negslope.set_ylabel('Frac. of\n-ve slopes', fontsize=fontsize, labelpad=5)
-        ax_negslope.set_xticks([0, np.pi / 2, np.pi])
-        ax_negslope.set_xticklabels(['0', '', '$\pi$'])
-        ax_negslope.set_yticks([0, 0.5, 1])
-        ax_negslope.set_yticklabels(['0', '', '1'])
-        ax_negslope.tick_params(labelsize=ticksize)
-        ax_negslope.spines["top"].set_visible(False)
-        ax_negslope.spines["right"].set_visible(False)
-        customlegend(ax_negslope, bbox_to_anchor=[0.6, 0.5], loc='lower left', fontsize=legendsize)
+        axR[0].step(adiff_bins[:-1], frac_N, color=ca_c[ca], where='pre', linewidth=0.75, label=ca, alpha=0.9)
+        axR[0].set_xlabel(r'$\theta_{pass}$' + ' (rad)', fontsize=fontsize)
+        axR[0].set_ylabel('Fraction of\nnegative slopes', fontsize=fontsize, labelpad=5)
+        axR[0].set_xticks([0, np.pi / 2, np.pi])
+        axR[0].set_xticklabels(['0', '', '$\pi$'])
+        axR[0].set_yticks([0, 0.5, 1])
+        axR[0].set_yticklabels(['0', '', '1'])
+        axR[0].tick_params(labelsize=ticksize)
+        axR[0].spines["top"].set_visible(False)
+        axR[0].spines["right"].set_visible(False)
+        customlegend(axR[0], bbox_to_anchor=[0.6, 0.55], loc='lower left', fontsize=legendsize)
 
         # Plot precess R
         caR = cadf[(~cadf['precess_R'].isna()) & numpass_mask]['precess_R'].to_numpy()
         allR.append(caR)
         rbins, redges = np.histogram(caR, bins=50)
         rbinsnorm = np.cumsum(rbins) / rbins.sum()
-        ax_R.plot(midedges(redges), rbinsnorm, label=ca, c=ca_c[ca], linewidth=linew)
+        axR[1].plot(midedges(redges), rbinsnorm, label=ca, c=ca_c[ca], linewidth=linew, alpha=0.9)
 
         # Plot Rate angles vs Precess angles
         nprecessmask = cadf['precess_df'].apply(lambda x: x['precess_exist'].sum()) > 1
@@ -485,7 +542,7 @@ def plot_field_bestprecession(df, save_dir):
         ax_pishift[2, caid].text(x=0.01, y=0.95, s='p=%s'%p2str(v_pval), fontsize=legendsize,
                                  transform=ax_pishift[2, caid].transAxes)
         stat_record(stat_fn, False, '%s, d(precess, rate), $V_{(%d)}=%0.2f, p=%s$' % (ca, bins.sum(), v_stat,
-                                                                                p2str(v_pval)))
+                                                                                      p2str(v_pval)))
 
         # Plot Histogram: d(precess_low, rate)
         mask_low = (~np.isnan(rateangles)) & (~np.isnan(precessangles_low) & numpass_low_mask)
@@ -509,7 +566,7 @@ def plot_field_bestprecession(df, save_dir):
         ax_pishift[3, caid].text(x=0.01, y=0.95, s='p=%s'%p2str(v_pval), fontsize=legendsize,
                                  transform=ax_pishift[3, caid].transAxes)
         stat_record(stat_fn, False, '%s, d(precess_low, rate), $V_{(%d)}=%0.2f, p=%s$' % (ca, bins.sum(), v_stat,
-                                                                                    p2str(v_pval)))
+                                                                                          p2str(v_pval)))
 
         # Export stats: Sig fraction
         ntotal_fields = cadf.shape[0]
@@ -534,32 +591,30 @@ def plot_field_bestprecession(df, save_dir):
         btwRtxt = 'Not available'
 
     stat_record(stat_fn, False, 'R differences between CAs, %s' % (btwRtxt))
-    ax_R.text(0.1, 0.02, 'CA1-3 diff.\np=%s' % (p2str(dunn_pvals[2])), fontsize=legendsize)
-    ax_R.set_xlabel('R', fontsize=fontsize)
-    ax_R.set_ylabel('Cumulative\nfield density', fontsize=fontsize, labelpad=5)
-    customlegend(ax_R, linewidth=1.5, fontsize=legendsize, bbox_to_anchor=[0.6, 0.3], loc='lower left')
-    ax_R.set_yticks([0, 0.5, 1])
-    ax_R.set_yticklabels(['0', '', '1'])
-    ax_R.tick_params(axis='both', which='major', labelsize=ticksize)
-    ax_R.spines["top"].set_visible(False)
-    ax_R.spines["right"].set_visible(False)
+    axR[1].text(0.1, 0.02, 'CA1-3 diff.\np=%s' % (p2str(dunn_pvals[2])), fontsize=legendsize)
+    axR[1].set_xlabel('R', fontsize=fontsize)
+    axR[1].set_ylabel('Cumulative\nfield density', fontsize=fontsize, labelpad=5)
+    axR[1].set_yticks([0, 0.5, 1])
+    axR[1].set_yticklabels(['0', '', '1'])
+    axR[1].set_xticks([0, 0.1, 0.2, 0.3])
+    axR[1].tick_params(axis='both', which='major', labelsize=ticksize)
+    axR[1].spines["top"].set_visible(False)
+    axR[1].spines["right"].set_visible(False)
 
     ax_pishift[1, 0].set_ylabel(r'$\theta_{Precess}$' + ' (rad)', fontsize=fontsize)
 
     for ax_each in ax_pishift[0,]:
         ax_each.set_xticks([0, np.pi / 2, np.pi])
         ax_each.set_xticklabels(['0', '$\pi/2$', '$\pi$'])
-        ax_each.set_ylim([0.01, 0.055])
+        ax_each.set_ylim([0.01, 0.040])
         ax_each.tick_params(axis='both', which='major', labelsize=fontsize)
-        ax_each.set_yticks([0.01, 0.03, 0.05])
+        ax_each.set_yticks([0.01, 0.02, 0.03, 0.04])
+        ax_each.set_yticks([0.015, 0.025, 0.035, 0.04], minor=True)
         ax_each.spines["top"].set_visible(False)
         ax_each.spines["right"].set_visible(False)
     ax_pishift[0, 1].set_xlabel(r'$|d(\theta_{pass}, \theta_{rate})|$' + ' (rad)', fontsize=fontsize)
     ax_pishift[0, 0].set_ylabel('Density', fontsize=fontsize)
-    ax_pishift[0, 0].yaxis.labelpad = 10
 
-    customlegend(ax_pishift[0, 0], handlelength=0.8, linewidth=1.2, fontsize=legendsize, bbox_to_anchor=[0.5, 0.3],
-                 loc='lower left')
 
     ax_pishift[0, 0].set_title('Precession\n', fontsize=fontsize)
     ax_pishift[0, 0].ticklabel_format(axis='y', style='sci', scilimits=(0, 0), useMathText=True)
@@ -578,18 +633,99 @@ def plot_field_bestprecession(df, save_dir):
     ax_pishift[3, 0].set_ylabel('Low-spike\n passes', fontsize=fontsize)
     ax_pishift[3, 0].yaxis.labelpad = 15
 
-    fig_pishift.tight_layout()
-    fig_pishift.subplots_adjust(wspace=0.25, hspace=1.25)
-    fig_R.tight_layout()
-    fig_R.subplots_adjust(bottom=0.3)
-    fig_negslope.tight_layout()
-    fig_negslope.subplots_adjust(bottom=0.4)
+def figure2(df, save_dir, tag=''):
 
-    for figext in ['png', 'eps']:
-        fig_pishift.savefig(join(save_dir, 'field_precess_pishift.%s' % (figext)), dpi=dpi)
-        fig_R.savefig(join(save_dir, 'field_precess_R.%s' % (figext)), dpi=dpi)
-        fig_negslope.savefig(join(save_dir, 'fraction_neg_slopes.%s' % (figext)), dpi=dpi)
+    # Precession examples
+    figpeg = plt.figure(figsize=(total_figw * 0.4, total_figw * 0.4 * 1.06667), facecolor=None)
+    axpeg_w = 1/3
+    axpeg_h = 1/4
+    axpeg_xsqueeze, axpeg_ysqueeze = 0.20, 0.175
+    axpeg_xbtw = axpeg_xsqueeze/3
+    axpeg_btm_ybtw = axpeg_ysqueeze/3
+    axpeg_top_yoffset = -0.11
+    axpeg_btm_yoffset = -0.025
 
+    axpeg = np.array([
+        [figpeg.add_axes([axpeg_w*0 + axpeg_xsqueeze/2 + axpeg_xbtw, axpeg_h*3 + axpeg_ysqueeze/2 + axpeg_top_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*1 + axpeg_xsqueeze/2, axpeg_h*3 + axpeg_ysqueeze/2 + axpeg_top_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*2 + axpeg_xsqueeze/2 - axpeg_xbtw, axpeg_h*3 + axpeg_ysqueeze/2 + axpeg_top_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2])
+         ],
+
+        [figpeg.add_axes([axpeg_w*0 + axpeg_xsqueeze/2 + axpeg_xbtw, axpeg_h*2 + axpeg_ysqueeze/2 - axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*1 + axpeg_xsqueeze/2, axpeg_h*2 + axpeg_ysqueeze/2 - axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*2 + axpeg_xsqueeze/2 - axpeg_xbtw, axpeg_h*2 + axpeg_ysqueeze/2 - axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2])
+         ],
+
+        [figpeg.add_axes([axpeg_w*0 + axpeg_xsqueeze/2 + axpeg_xbtw, axpeg_h*1 + axpeg_ysqueeze/2 + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*1 + axpeg_xsqueeze/2, axpeg_h*1 + axpeg_ysqueeze/2 + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*2 + axpeg_xsqueeze/2 - axpeg_xbtw, axpeg_h*1 + axpeg_ysqueeze/2 + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2])
+         ],
+
+        [figpeg.add_axes([axpeg_w*0 + axpeg_xsqueeze/2 + axpeg_xbtw, axpeg_h*0 + axpeg_ysqueeze/2 + axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*1 + axpeg_xsqueeze/2, axpeg_h*0 + axpeg_ysqueeze/2 + axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2]),
+         figpeg.add_axes([axpeg_w*2 + axpeg_xsqueeze/2 - axpeg_xbtw, axpeg_h*0 + axpeg_ysqueeze/2 + axpeg_btm_ybtw + axpeg_btm_yoffset, axpeg_w - axpeg_xsqueeze/2, axpeg_h - axpeg_ysqueeze/2])
+         ],
+
+    ])
+    axpeg[2, 0].set_ylabel('Phase (rad)', fontsize=legendsize)
+    # figpeg.text(0.03, 0.35, 'Phase (rad)', ha='center', rotation=90, fontsize=fontsize)
+    figpeg.text(0.55, 0.005, 'Position', ha='center', fontsize=legendsize)
+    plot_precession_examples(df, axpeg)
+
+
+
+
+    # Neg-slope, Pi-shift, R
+    figpi = plt.figure(figsize=(total_figw * 0.6, total_figw * 0.8), facecolor='white')
+    axpi_w = 1/3
+    axpi_h = 1/4
+    axpi_top_xsqueeze, axpi_top_ysqueeze = 0.15, 0.15
+    axpi_bottom_xsqueeze, axpi_bottom_ysqueeze = 0.25, 0.25
+    axpi_top_xbtw = 0.025
+    axpi_bottom_xbtw = 0.05
+    axpi_bottom_leftshift = 0.025
+    axpi_yoffset = -0.1
+    scatter_yoffset = -0.085
+    allpass_yoffset = -0.085
+    axpi = np.array([
+        [figpi.add_axes([0 + axpi_top_xsqueeze/2 + axpi_top_xbtw, axpi_h*3 + axpi_top_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_top_xsqueeze/2, axpi_h - axpi_top_ysqueeze/2]),
+         figpi.add_axes([axpi_w + axpi_top_xsqueeze/2, axpi_h*3 + axpi_top_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_top_xsqueeze/2, axpi_h - axpi_top_ysqueeze/2]),
+         figpi.add_axes([axpi_w*2 + axpi_top_xsqueeze/2 - axpi_top_xbtw, axpi_h*3 + axpi_top_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_top_xsqueeze/2, axpi_h - axpi_top_ysqueeze/2])],
+
+        [figpi.add_axes([0 + axpi_bottom_xsqueeze/2 + axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*2 + axpi_bottom_ysqueeze/2 + axpi_yoffset + scatter_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2]),
+         figpi.add_axes([axpi_w + axpi_bottom_xsqueeze/2 - axpi_bottom_leftshift, axpi_h*2 + axpi_bottom_ysqueeze/2 + axpi_yoffset + scatter_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2]),
+         figpi.add_axes([axpi_w*2 + axpi_bottom_xsqueeze/2 - axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*2 + axpi_bottom_ysqueeze/2 + axpi_yoffset + scatter_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2])],
+
+        [figpi.add_axes([0 + axpi_bottom_xsqueeze/2 + axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*1 + axpi_bottom_ysqueeze/2 + axpi_yoffset + allpass_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True),
+         figpi.add_axes([axpi_w + axpi_bottom_xsqueeze/2 - axpi_bottom_leftshift, axpi_h*1 + axpi_bottom_ysqueeze/2 + axpi_yoffset + allpass_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True),
+         figpi.add_axes([axpi_w*2 + axpi_bottom_xsqueeze/2 - axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*1 + axpi_bottom_ysqueeze/2 + axpi_yoffset + allpass_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True)],
+
+        [figpi.add_axes([0 + axpi_bottom_xsqueeze/2 + axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*0 + axpi_bottom_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True),
+         figpi.add_axes([axpi_w + axpi_bottom_xsqueeze/2 - axpi_bottom_leftshift, axpi_h*0 + axpi_bottom_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True),
+         figpi.add_axes([axpi_w*2 + axpi_bottom_xsqueeze/2 - axpi_bottom_xbtw - axpi_bottom_leftshift, axpi_h*0 + axpi_bottom_ysqueeze/2 + axpi_yoffset, axpi_w - axpi_bottom_xsqueeze/2, axpi_h - axpi_bottom_ysqueeze/2], polar=True)],
+    ])
+
+
+
+    figR = plt.figure(figsize=(total_figw * 0.32, total_figw * 0.4), facecolor='white')
+    axR_w = 1
+    axR_h = 1/2
+    axR_xsqueeze, axR_ysqueeze = 0.6, 0.5
+    axR_yoffset = -0.1
+    axneg_yoffset = -0.01
+    axR = np.array([
+        figR.add_axes([0 + axR_xsqueeze/2, axR_h*1 + axR_ysqueeze/2 + axR_yoffset + axneg_yoffset, axR_w - axR_xsqueeze/2, axR_h - axR_ysqueeze/2]),
+        figR.add_axes([0 + axR_xsqueeze/2, axR_h*0 + axR_ysqueeze/2 + axR_yoffset, axR_w - axR_xsqueeze/2, axR_h - axR_ysqueeze/2])
+    ])
+
+    plot_field_bestprecession(df, axpi, axR)
+
+    figpi.savefig(join(save_dir, 'field_precess_pishift.pdf'), dpi=dpi)
+    figpi.savefig(join(save_dir, 'field_precess_pishift.png'), dpi=dpi)
+    figR.savefig(join(save_dir, 'field_precess_R.pdf'), dpi=dpi)
+    figR.savefig(join(save_dir, 'field_precess_R.png'), dpi=dpi)
+    figpeg.savefig(os.path.join(save_dir, 'precess_examples.pdf'), dpi=dpi)
+    figpeg.savefig(os.path.join(save_dir, 'precess_examples.png'), dpi=dpi)
 
 def plot_both_slope_offset(df, save_dir):
     import warnings
@@ -737,8 +873,8 @@ def plot_both_slope_offset(df, save_dir):
         ax1[0, caid].set_yticks([0, np.pi, 2*np.pi])
         ax1[0, caid].set_yticklabels(['0', '', '$2\pi$'])
         ax1[0, caid].tick_params(labelsize=ticksize)
-        ax1[0, caid].set_title(ca, fontsize=titlesize)
-        ax1[0, 1].set_xlabel(adiff_label, fontsize=fontsize)
+        ax1[0, caid].set_title(ca, fontsize=legendsize)
+        ax1[0, 1].set_xlabel(adiff_label, fontsize=legendsize)
 
         # Plot slope density
         regressed = (slope_c + slope_xedm * slope_m)
@@ -759,7 +895,7 @@ def plot_both_slope_offset(df, save_dir):
         ax1[1, caid].set_yticks([-2 * np.pi, -np.pi, 0])
         ax1[1, caid].set_yticklabels(['$-2\pi$', '', '0'])
         ax1[1, caid].tick_params(labelsize=ticksize)
-        ax1[1, 1].set_xlabel(adiff_label, fontsize=fontsize)
+        ax1[1, 1].set_xlabel(adiff_label, fontsize=legendsize)
 
         # # Marginals
         plot_marginal_slices(ax2[0, caid], offset_xx, offset_yy, offset_zz,
@@ -769,16 +905,16 @@ def plot_both_slope_offset(df, save_dir):
         ax2[0, caid].set_xticks([2, 4, 6])
         ax2[0, caid].set_xticklabels(['2', '4', '6'])
         ax2[0, caid].set_xlim(2, 6)
-        ax2[0, 1].set_xlabel('Onset phase (rad)', fontsize=fontsize)
+        ax2[0, 1].set_xlabel('Onset phase (rad)', fontsize=legendsize)
         ax2[0, caid].tick_params(labelsize=ticksize)
-        ax2[0, caid].set_title(ca, fontsize=titlesize, pad=15)
+        ax2[0, caid].set_title(ca, fontsize=legendsize)
 
 
         plot_marginal_slices(ax2[1, caid], slope_xx, slope_yy, slope_zz,
                              selected_adiff, slope_slicerange, slope_slicegap)
         ax2[1, caid].set_xticks([-2 * np.pi, -np.pi, 0])
         ax2[1, caid].set_xticklabels(['$-2\pi$', '', '0'])
-        ax2[1, 1].set_xlabel('Slope (rad)', fontsize=fontsize)
+        ax2[1, 1].set_xlabel('Slope (rad)', fontsize=legendsize)
         ax2[1, caid].tick_params(labelsize=ticksize)
         ax2[1, caid].set_xlim(-2 * np.pi, 0)
 
@@ -788,51 +924,34 @@ def plot_both_slope_offset(df, save_dir):
         slopes_high_all, offsets_high_all = slope[high_mask], offset[high_mask]
         slopes_low_all, offsets_low_all = slope[low_mask], offset[low_mask]
 
-        pval_slope, _, slope_descrips, slopetxt = my_kruskal_2samp(slopes_low_all, slopes_high_all, 'low-$|d|$', 'high-$|d|$')
+        tag1, tag2 = r'Along-$\theta_{rm rate}$', r'Against-$\theta_{rm rate}$'
+        pval_slope, _, slope_descrips, slopetxt = my_kruskal_2samp(slopes_low_all, slopes_high_all, tag1, tag2)
         (mdn_slopel, lqr_slopel, hqr_slopel), (mdn_slopeh, lqr_slopeh, hqr_slopeh) = slope_descrips
+        mean_slopel, mean_slopeh = np.mean(slopes_low_all), np.mean(slopes_high_all)
+        sem_slopel = np.std(slopes_low_all)/np.sqrt(slopes_low_all.shape[0])
+        sem_slopeh = np.std(slopes_high_all)/np.sqrt(slopes_high_all.shape[0])
 
-        pval_offset, _, offset_descrips, offsettxt = my_ww_2samp(offsets_low_all, offsets_high_all, 'low-$|d|$', 'high-$|d|$')
+        pval_offset, _, offset_descrips, offsettxt = my_ww_2samp(offsets_low_all, offsets_high_all, tag1, tag2)
         (cmean_offsetl, sem_offsetl), (cmean_offseth, sem_offseth) = offset_descrips
 
         xdum = np.linspace(0, 1, 10)
         high_agg_ydum = mdn_slopeh * xdum + cmean_offseth
         low_agg_ydum = mdn_slopel * xdum + cmean_offsetl
-        slopel_valstr = r'low-$|d|=%0.2f$'%(mdn_slopel)
-        slopeh_valstr = r'high-$|d|=%0.2f$'%(mdn_slopeh)
-        offsetl_valstr = r'low-$|d|=%0.2f$'%(cmean_offsetl)
-        offseth_valstr = r'high-$|d|=%0.2f$'%(cmean_offseth)
+        slope_stattext = '%s, mdn=%0.2f, mean+-SEM= %0.2f $\pm$ %0.2f\n'%(tag1, mdn_slopel, mean_slopel, sem_slopel)
+        slope_stattext += '%s, mdn=%0.2f, mean+-SEM= %0.2f $\pm$ %0.2f'%(tag2, mdn_slopeh, mean_slopeh, sem_slopeh)
+        offset_stattext = '%s, mean+-SEM =%0.2f $\pm$ %0.2f\n'%(tag1, cmean_offsetl, sem_offsetl)
+        offset_stattext += '%s, mean+-SEM =%0.2f $\pm$ %0.2f'%(tag2, cmean_offseth, sem_offseth)
         stat_record(stat_fn, False, '===== Average precession curves ====' )
-        stat_record(stat_fn, False, 'Slope, %s, %s, %s'%(slopel_valstr, slopeh_valstr, slopetxt))
-        stat_record(stat_fn, False, 'Onset, %s, %s, %s'%(offsetl_valstr, offseth_valstr, offsettxt))
+        stat_record(stat_fn, False, 'Slope\n%s\n%s'%(slope_stattext, slopetxt))
+        stat_record(stat_fn, False, 'Onset\n%s\n%s'%(offset_stattext, offsettxt))
 
-        # np.random.seed(1)
-        # high_sam = min(high_mask.sum(), 500)
-        # low_sam = min(low_mask.sum(), 500)
-        # high_ranvec = np.random.choice(high_mask.sum(), size=high_sam, replace=False)
-        # low_ranvec = np.random.choice(low_mask.sum(), size=low_sam, replace=False)
-        # slopes_high, offsets_high = slope[high_mask][high_ranvec], offset[high_mask][high_ranvec]
-        # slopes_low, offsets_low = slope[low_mask][low_ranvec], offset[low_mask][low_ranvec]
-        # regress_high, regress_low, pval_slope, pval_offset = permutation_test_arithmetic_average_slopeoffset(
-        #     slopes_high, offsets_high, slopes_low, offsets_low, NShuffles=NShuffles)
-        # stat_record(stat_fn, False, '=====Permutation test====')
-        # stat_record(stat_fn, False,
-        #             r'%s Onset difference (rad) low-$|d|=%0.2f$, high-$|d|=%0.2f$, $p=%s$' % \
-        #             (ca, regress_low['phi0'], regress_high['phi0'], p2str(pval_offset)))
-        # stat_record(stat_fn, False,
-        #             r'%s Slope difference (rad) low-$|d|=%0.2f$, high-$|d|=%0.2f$, $p=%s$' % \
-        #             (ca, regress_low['aopt']*2*np.pi, regress_high['aopt']*2*np.pi, p2str(pval_slope)))
-        # xdum = np.linspace(0, 1, 10)
-        # high_agg_ydum = 2 * np.pi * regress_high['aopt'] * xdum + regress_high['phi0']
-        # low_agg_ydum = 2 * np.pi * regress_low['aopt'] * xdum + regress_low['phi0']
-
-        ax3[0, caid].plot(xdum, high_agg_ydum, c='lime', label='$|d|>5\pi/6$')
-        ax3[0, caid].plot(xdum, low_agg_ydum, c='darkblue', label='$|d|<\pi/6$')
-
+        ax3[0, caid].plot(xdum, high_agg_ydum, c='lime')
+        ax3[0, caid].plot(xdum, low_agg_ydum, c='darkblue')
         ax3[0, caid].annotate('$p_s$'+'=%s'% (p2str(pval_slope)), xy=(0.015, 0.2 + 0.03), xycoords='axes fraction', fontsize=legendsize-1)
         ax3[0, caid].annotate('$p_o$'+'=%s'% (p2str(pval_offset)), xy=(0.015, 0.035 + 0.03), xycoords='axes fraction', fontsize=legendsize-1)
         ax3[0, caid].spines["top"].set_visible(False)
         ax3[0, caid].spines["right"].set_visible(False)
-        ax3[0, caid].set_title(ca, fontsize=titlesize, pad=15)
+        ax3[0, caid].set_title(ca, fontsize=legendsize)
 
         # # high- and low-|d| Spike phases
         low_mask_sp = absadiff_spike < (np.pi / 6)
@@ -842,8 +961,8 @@ def plot_both_slope_offset(df, save_dir):
         mean_phasesph = circmean(phasesph)
         mean_phasespl = circmean(phasespl)
         fstat, k_pval = circ_ktest(phasesph, phasespl)
-        p_ww, _, _, ww_txt = my_ww_2samp(phasespl, phasesph, 'low-$|d|$', 'high-$|d|$')
-
+        p_ww, _, phasesp_descript, ww_txt = my_ww_2samp(phasespl, phasesph, tag1, tag2)
+        ((mean_phasespl, sem_phasespl), (mean_phasesph, sem_phasesph)) = phasesp_descript
         phasesph_bins, phasesp_edges = np.histogram(phasesph, bins=36, range=(-np.pi, np.pi))
         phasespl_bins, _ = np.histogram(phasespl, bins=36, range=(-np.pi, np.pi))
         maxl = max((phasespl_bins/phasespl_bins.sum()).max(), (phasesph_bins/phasesph_bins.sum()).max())
@@ -857,23 +976,24 @@ def plot_both_slope_offset(df, save_dir):
         ax3[1, caid].set_xticks([-np.pi, 0, np.pi])
         ax3[1, caid].set_xticklabels(['$-\pi$', '0', '$\pi$'])
         ax3[1, caid].set_yticks([0, 0.02, 0.04])
+        ax3[1, caid].set_yticklabels(['0', '2', '4'])
         ax3[1, caid].set_ylim(0, 0.05)
 
         ax3[1, caid].tick_params(labelsize=ticksize)
         ax3[1, caid].spines["top"].set_visible(False)
         ax3[1, caid].spines["right"].set_visible(False)
-        ax3[1, 1].set_xlabel('Phase (rad)', fontsize=fontsize)
-        ax3[1, 0].set_ylabel('Relative\nfrequency', fontsize=fontsize)
+        ax3[1, 1].set_xlabel('Phase (rad)', fontsize=legendsize)
+        ax3[1, 0].set_ylabel('Normalized\nspike count', fontsize=legendsize)
 
-        stat_record(stat_fn, False, 'Spike phase mean difference, %s' % (ww_txt))
-        stat_record(stat_fn, False,
-                    r'SpikePhase-HighLowDiff %s Bartlett\'s test $F_{(%d, %d)}=%0.2f, p=%s$' % \
-                    (ca, phasesph.shape[0]-1, phasespl.shape[0]-1, fstat, p2str(k_pval)))
+        phasesp_stattxt = '============Spike phase mean difference===============\n'
+        phasesp_stattxt += '%s: mean+-SEM = %0.2f $\pm$ %0.2f\n'%(tag1, mean_phasespl, sem_phasespl)
+        phasesp_stattxt += '%s: mean+-SEM = %0.2f $\pm$ %0.2f\n' %(tag2, mean_phasesph, sem_phasesph)
+        phasesp_stattxt += ww_txt
+        stat_record(stat_fn, False, phasesp_stattxt)
 
     # Asthestic for Density (ax1)
-    ax1[0, 0].set_ylabel('Onset phase (rad)', fontsize=fontsize)
-    ax1[0, 0].yaxis.labelpad = 18
-    ax1[1, 0].set_ylabel('Slope (rad)', fontsize=fontsize)
+    ax1[0, 0].set_ylabel('Onset phase (rad)', fontsize=legendsize)
+    ax1[1, 0].set_ylabel('Slope (rad)', fontsize=legendsize)
 
 
     # Asthestic for Marginals
@@ -883,7 +1003,7 @@ def plot_both_slope_offset(df, save_dir):
         ax_each.spines["top"].set_visible(False)
         ax_each.spines["right"].set_visible(False)
         ax_each.spines["left"].set_visible(False)
-    fig2.text(0.05, 0.35, 'Marginal density\n of precession', rotation=90, fontsize=fontsize)
+    fig2.text(0.05, 0.35, 'Marginal density\n of precession', rotation=90, fontsize=legendsize)
 
     # Asthestics for average curves
     for ax_each in ax3[0,]:
@@ -892,13 +1012,10 @@ def plot_both_slope_offset(df, save_dir):
         ax_each.set_yticks([-np.pi, 0, np.pi])
         ax_each.set_yticklabels(['$-\pi$', '0', '$\pi$'])
         ax_each.tick_params(labelsize=ticksize)
-    ax3[0, 1].set_xlabel('Position')
-    customlegend(ax3[0, 2], fontsize=legendsize, loc='lower left', handlelength=0.5, bbox_to_anchor=(0.1, 0.7))
-    ax3[0, 0].set_ylabel('Phase (rad)', fontsize=fontsize)
-    ax3[0, 0].yaxis.labelpad = 5
-    ax3[1, 0].yaxis.labelpad = 5
-    ax3[1, 0].ticklabel_format(axis='y', style='sci', scilimits=(0, 0), useMathText=True)
-    ax3[1, 0].yaxis.get_offset_text().set_x(-0.1)
+    ax3[0, 1].set_xlabel('Position', fontsize=legendsize)
+    ax3[0, 0].set_ylabel('Phase (rad)', fontsize=legendsize)
+    ax3[1, 0].annotate(r'$\times 10^{-2}$', xy=(0.02, 0.9), xycoords='axes fraction', fontsize=ticksize)
+
 
 
     # Colorbar
@@ -910,7 +1027,7 @@ def plot_both_slope_offset(df, save_dir):
     cb = fig_colorbar.colorbar(sm, cax=cbar_ax)
     cb.set_ticks(adiff_ticks)
     cb.set_ticklabels(adiff_ticksl)
-    cb.set_label(adiff_label, fontsize=fontsize, labelpad=-5)
+    cb.set_label(adiff_label, fontsize=legendsize, labelpad=-5)
 
     # # Saving
     fig1.tight_layout()
@@ -969,12 +1086,14 @@ def check_pass_nspikes(df):
         precessdf = allprecessdf[allprecessdf['precess_exist']]
         print('\n%s' % ca)
         print(precessdf['pass_nspikes'].describe())
+        print(allprecessdf['pass_nspikes'].describe())
 
 
-def reprocess(df):
+def recompute_precessangle(df, kappa, CA3nsp_thresh):
     aedges_precess = np.linspace(-np.pi, np.pi, 6)
-    kappa_precess = 1
-    nspikes_stats = {'CA1': 7, 'CA2': 7, 'CA3': 8}
+    kappa_precess = kappa
+    # nspikes_stats = {'CA1': 7, 'CA2': 7, 'CA3': 8}
+    nspikes_stats = {'CA1': 5, 'CA2': 4, 'CA3': CA3nsp_thresh}
     precess_angle_low_list = []
     numpass_at_precess_low_list = []
     for i in range(df.shape[0]):
@@ -992,6 +1111,18 @@ def reprocess(df):
                                                           pass_nspikes=ldf['pass_nspikes'].to_numpy(),
                                                           precess_mask=ldf['precess_exist'].to_numpy(),
                                                           kappa=None, bins=aedges_precess)
+            # spikes_angles = np.concatenate(ldf['spikeangle'].to_list())
+            # precess_angle_low, _, _ = compute_precessangle_anglesp(pass_angles=ldf['mean_anglesp'].to_numpy(),
+            #                                                        anglesp=spikes_angles,
+            #                                                        precess_mask=ldf['precess_exist'].to_numpy(),
+            #                                                        kappa=kappa_precess, bins=None)
+            # _, _, postdoc_dens_low = compute_precessangle_anglesp(pass_angles=ldf['mean_anglesp'].to_numpy(),
+            #                                                       anglesp=spikes_angles,
+            #                                                       precess_mask=ldf['precess_exist'].to_numpy(),
+            #                                                       kappa=None, bins=aedges_precess)
+
+
+
             (_, passbins_p_low, passbins_np_low, _) = postdoc_dens_low
             all_passbins_low = passbins_p_low + passbins_np_low
             numpass_at_precess_low = get_numpass_at_angle(target_angle=precess_angle_low, aedge=aedges_precess,
@@ -1010,25 +1141,24 @@ def reprocess(df):
 
 def main():
     # # Setting
-    data_pth = 'results/emankin/singlefield_df_NoShuffle_newR_3v5sthresh.pickle'
-    save_dir = 'result_plots/single_field_NoShuffle_allChunck/'
-    os.makedirs(save_dir, exist_ok=True)
+    data_pth = 'results/emankin/singlefield_df.pickle'
+    save_dir = 'writting/figures'
+    figure_dir = 'writting/figures/'
+    for i in range(1, 4):
+        os.makedirs(join(figure_dir, 'fig%d'%(i)), exist_ok=True)
 
     # # Loading
     df = pd.read_pickle(data_pth)
+    # df = recompute_precessangle(df, kappa=1, CA3nsp_thresh=5)
+    # check_pass_nspikes(df)
 
     # # Analysis
-    omniplot_singlefields(df, save_dir=save_dir)
-    plot_precession_examples(df, save_dir=save_dir)
-    plot_field_bestprecession(df=df, save_dir=save_dir)
-    plot_both_slope_offset(df=df, save_dir=save_dir)
-
+    omniplot_singlefields(df, save_dir=join(save_dir, 'fig1'))
+    # figure2(df, save_dir=join(save_dir, 'fig2'))
+    # plot_both_slope_offset(df=df, save_dir=join(save_dir, 'fig3'))
 
 
     # # Archive
-    # check_pass_nspikes(df)
-    # df = reprocess(df)
-    #
     # plot_precession_pvals(singlefield_df, save_dir)
 
 

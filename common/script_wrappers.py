@@ -11,7 +11,7 @@ from scipy.interpolate import interp1d
 from pycircstat.descriptive import mean as circmean, cdiff, resultant_vector_length
 from common.linear_circular_r import rcc
 from common.comput_utils import DirectionerBining, DirectionerMLM, compute_straightness, circular_density_1d, \
-    repeat_arr, shiftcyc_full2half, midedges, normalize_distr, passes_spikes_shuffle
+    repeat_arr, shiftcyc_full2half, midedges, normalize_distr
 
 
 class DirectionalityStatsByThresh:
@@ -259,8 +259,6 @@ class PrecessionFilter:
         return precess_df
 
 
-
-
 def compute_precessangle(pass_angles, pass_nspikes, precess_mask, kappa=None, bins=None):
     """
 
@@ -306,6 +304,64 @@ def compute_precessangle(pass_angles, pass_nspikes, precess_mask, kappa=None, bi
     R = resultant_vector_length(pass_ax, w=norm_density, d=pass_ax[1] - pass_ax[0])
     return bestangle, R, (norm_density, passbins_p, passbins_np, spikebins)
 
+def compute_precessangle_subsampled(pass_angles, pass_nspikes, precess_mask, kappa=None, bins=None, seed=None):
+    """
+
+    Parameters
+    ----------
+    pass_angles : ndarray
+        1d array with pass angles in range -pi and pi.
+    pass_nspikes : ndarray
+        1d array with number of spikes in the corresponding pass as "pass_angles".
+    precess_mask : ndarray
+        1d bool-array specifying which pass in "pass_angles" is precessing.
+    kappa : int or float or None
+        Concentration of von-mise distribution for KDE. int or float for enabling KDE. None for disabling KDE.
+    bins : ndarray or None
+        1d array of edges for binning the pass_angles.
+
+    Returns
+    -------
+
+    """
+
+    if (kappa is None) and (bins is None):
+        raise AssertionError('Either one of the arguments kappa and bins must be specified.')
+    if (kappa is not None) and (bins is not None):
+        raise AssertionError('Argument kappa and bins cannot be both specified.')
+
+    precess_angles = pass_angles[precess_mask]
+    nonprecess_angles = pass_angles[~precess_mask]
+    numpass = pass_angles.shape[0]
+    numprecess = int(precess_mask.sum())
+    if kappa is not None:  # Use KDE with concentration kappa
+        pass_ax, passbins_p = circular_density_1d(precess_angles, kappa, 100, (-np.pi, np.pi))
+        pass_ax, passbins_np = circular_density_1d(nonprecess_angles, kappa, 100, (-np.pi, np.pi))
+
+        passpass, axax = np.meshgrid(pass_angles, pass_ax)
+        passax_idx = np.argmin(np.abs(cdiff(passpass, axax)), axis=0)
+        angle_probs = passbins_p[passax_idx]
+        angle_probs_norm = angle_probs/np.sum(angle_probs)
+        if seed is not None:
+            np.random.seed(seed)
+        allpass_sampledidx = np.random.choice(numpass, size=numprecess, replace=True, p=angle_probs_norm)
+        spike_ax, spikebins = circular_density_1d(pass_angles[allpass_sampledidx], kappa, 100, (-np.pi, np.pi),
+                                                  w=pass_nspikes[allpass_sampledidx])
+
+    elif bins is not None:  # Use binning with certain binsize
+        passbins_p, pass_ax = np.histogram(precess_angles, bins=bins)
+        passbins_np, pass_ax = np.histogram(nonprecess_angles, bins=bins)
+        spikebins, pass_ax = np.histogram(repeat_arr(pass_angles[precess_mask], pass_nspikes[precess_mask].astype(int)), bins=bins)
+        pass_ax = midedges(pass_ax)
+    else:
+        raise
+    norm_density = normalize_distr(passbins_p, spikebins)
+
+    # Best direction
+    bestangle = circmean(pass_ax, w=norm_density, d=pass_ax[1] - pass_ax[0])
+    R = resultant_vector_length(pass_ax, w=norm_density, d=pass_ax[1] - pass_ax[0])
+    return bestangle, R, (norm_density, passbins_p, passbins_np, spikebins)
+
 
 def get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, field_d, kappa=None, bins=None):
     """
@@ -329,10 +385,14 @@ def get_single_precessdf(passdf, precesser, precess_filter, neuro_keys_dict, fie
     else:
 
         # Compute statistics for precession (bestangle, R, norm_distr)
+        # bestangle, R, densities = compute_precessangle(pass_angles=precess_df['mean_anglesp'].to_numpy(),
+        #                                                pass_nspikes=precess_df['pass_nspikes'].to_numpy(),
+        #                                                precess_mask=precess_df['precess_exist'].to_numpy(),
+        #                                                kappa=kappa, bins=bins)
         bestangle, R, densities = compute_precessangle(pass_angles=precess_df['mean_anglesp'].to_numpy(),
-                                                       pass_nspikes=precess_df['pass_nspikes'].to_numpy(),
-                                                       precess_mask=precess_df['precess_exist'].to_numpy(),
-                                                       kappa=kappa, bins=bins)
+                                                                   pass_nspikes=precess_df['pass_nspikes'].to_numpy(),
+                                                                   precess_mask=precess_df['precess_exist'].to_numpy(),
+                                                                   kappa=kappa, bins=bins)
 
         return precess_df, bestangle, R, densities
 

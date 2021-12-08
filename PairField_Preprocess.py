@@ -16,8 +16,8 @@ from common.utils import load_pickle
 from common.stattests import stat_record
 from common.comput_utils import dist_overlap, normsig, append_extrinsicity, linear_circular_gauss_density, \
     find_pair_times, \
-    IndataProcessor, check_border, window_shuffle_gen, \
-    compute_straightness, calc_kld, window_shuffle_wrapper, timeshift_shuffle_exp_wrapper, segment_passes, \
+    IndataProcessor, check_border, \
+    compute_straightness, calc_kld, timeshift_shuffle_exp_wrapper, segment_passes, \
     pair_diff, \
     check_border_sim, midedges, append_info_from_passes, DirectionerMLM, DirectionerBining, circular_density_1d, \
     get_numpass_at_angle
@@ -35,6 +35,7 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
                          peak_rate1=[], peak_rate2=[],
                          minocc1=[], minocc2=[],
                          fieldcoor1=[], fieldcoor2=[], com1=[], com2=[],
+                         pf1=[], pf2=[], mask1=[], mask2=[],
 
                          rate_angle1=[], rate_angle2=[], rate_anglep=[],
                          rate_R1=[], rate_R2=[], rate_Rp=[],
@@ -339,6 +340,11 @@ def pair_field_preprocess_exp(df, vthresh=5, sthresh=3, NShuffles=200, save_pth=
                 pairdata_dict['area2'].append(area2)
                 pairdata_dict['xyval1'].append(xyval1)
                 pairdata_dict['xyval2'].append(xyval2)
+                pairdata_dict['pf1'].append(pf1)
+                pairdata_dict['pf2'].append(pf2)
+                pairdata_dict['mask1'].append(mask1)
+                pairdata_dict['mask2'].append(mask2)
+
 
                 pairdata_dict['aver_rate1'].append(aver_rate1)
                 pairdata_dict['aver_rate2'].append(aver_rate2)
@@ -755,7 +761,7 @@ def plot_pair_examples(df, vthresh=5, sthresh=3, plot_dir=None):
 if __name__ == '__main__':
     # Experiment's data preprocessing
     data_pth = 'data/emankindata_processed_withwave.pickle'
-    save_pth = 'results/emankin/pairfield_df.pickle'
+    save_pth = 'results/emankin/pairfield_df_addedpf.pickle'
 
     expdf = load_pickle(data_pth)
     pair_field_preprocess_exp(expdf, vthresh=5, sthresh=3, NShuffles=200, save_pth=save_pth)

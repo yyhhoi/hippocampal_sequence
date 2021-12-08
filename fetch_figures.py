@@ -60,8 +60,7 @@ def fetch_figure2(resultplot_dir, dest_dir):
     # Fig 2D, E, F
     singlepass_dir = join(resultplot_dir, 'single_field')
 
-    fns = ['field_precess_pishift.eps', 'field_precess_R.eps', 'precess_examples.eps',
-           'fraction_neg_slopes.eps']
+    fns = ['field_precess_pishift.eps', 'field_precess_R.eps', 'precess_examples.eps']
     for fn in fns:
         shutil.copy(join(singlepass_dir, fn),
                     join(dest_dir, fn) )
@@ -154,9 +153,9 @@ fig_dir = '/home/yiu/projects/hippocampus/writting/figures'
 # fetch_figure2(resultplot_dir, join(fig_dir, 'fig2'))
 # fetch_figure3(resultplot_dir, join(fig_dir, 'fig3'))
 # fetch_figure4(resultplot_dir, join(fig_dir, 'fig4'))
-# fetch_figure5(resultplot_dir, join(fig_dir, 'fig5'))
+fetch_figure5(resultplot_dir, join(fig_dir, 'fig5'))
 # fetch_figure6(resultplot_dir, join(fig_dir, 'fig6'))
 # fetch_figure7(resultplot_dir, join(fig_dir, 'fig7'))
 # fetch_figureS1(resultplot_dir, join(fig_dir, 'figS1'))
-fetch_figure8(resultplot_dir, join(fig_dir, 'fig8'))
-fetch_figure9(resultplot_dir, join(fig_dir, 'fig9'))
+# fetch_figure8(resultplot_dir, join(fig_dir, 'fig8'))
+# fetch_figure9(resultplot_dir, join(fig_dir, 'fig9'))
