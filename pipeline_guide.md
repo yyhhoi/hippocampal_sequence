@@ -8,6 +8,7 @@ The script mainly segments and identifies the place fields. Pair identification 
 1. Run [matlab/emankin_preprocessing.m](matlab/emankin_preprocessing.m) to pre-process the raw place cell data at ./data/emankin/
 2. It generates the matlab structure data file ./data/emankin/emankindata_processed.mat
 
+Note: A complete python-based pipeline is located in the directory [python-based_preprocessing_pipelines](python-based_preprocessing_pipelines). However, this pipeline was ditched and no longer working. It only serves as future references of how the preprocessing can be done in python. 
 
 # Step 2 Conversion to python-readable data
 The matlab data is then converted to a python dataframe.
