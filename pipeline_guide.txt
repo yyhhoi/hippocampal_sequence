@@ -1,5 +1,8 @@
+This pipeline guide describes the processing and analysis steps that lead to the findings in Yiu, Leuteb and Leibold 2022, see:
 
-
+Directional Tuning of Phase Precession Properties in the Hippocampus
+Yuk-Hoi Yiu, Jill K. Leutgeb and Christian Leibold
+Journal of Neuroscience 16 March 2022, 42 (11) 2282-2297; DOI: https://doi.org/10.1523/JNEUROSCI.1569-21.2021
 
 ================= Step 1 Matlab processing ====================
 Electrophysiological data recorded by Mankin is first processed by a Matlab script.
