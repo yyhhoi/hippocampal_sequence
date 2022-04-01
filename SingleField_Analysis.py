@@ -1079,65 +1079,6 @@ def plot_precession_pvals(singledf, savedir):
     fig.savefig(join(savedir, 'precession_significance.png'), dpi=dpi)
 
 
-def check_pass_nspikes(df):
-    for ca, cadf in df.groupby('ca'):
-        allprecessdf = pd.concat(cadf['precess_df'].to_list(), axis=0, ignore_index=True)
-
-        precessdf = allprecessdf[allprecessdf['precess_exist']]
-        print('\n%s' % ca)
-        print(precessdf['pass_nspikes'].describe())
-        print(allprecessdf['pass_nspikes'].describe())
-
-
-def recompute_precessangle(df, kappa, CA3nsp_thresh):
-    aedges_precess = np.linspace(-np.pi, np.pi, 6)
-    kappa_precess = kappa
-    # nspikes_stats = {'CA1': 7, 'CA2': 7, 'CA3': 8}
-    nspikes_stats = {'CA1': 5, 'CA2': 4, 'CA3': CA3nsp_thresh}
-    precess_angle_low_list = []
-    numpass_at_precess_low_list = []
-    for i in range(df.shape[0]):
-        print('\rReprocessing %d/%d' % (i, df.shape[0]), flush=True, end='')
-        ca, precess_df = df.loc[i, ['ca', 'precess_df']]
-
-        # Precession - low-spike passes
-        ldf = precess_df[precess_df['pass_nspikes'] < nspikes_stats[ca]]  # 25% quantile
-        if (ldf.shape[0] > 0) and (ldf['precess_exist'].sum() > 0):
-            precess_angle_low, _, _ = compute_precessangle(pass_angles=ldf['mean_anglesp'].to_numpy(),
-                                                           pass_nspikes=ldf['pass_nspikes'].to_numpy(),
-                                                           precess_mask=ldf['precess_exist'].to_numpy(),
-                                                           kappa=kappa_precess, bins=None)
-            _, _, postdoc_dens_low = compute_precessangle(pass_angles=ldf['mean_anglesp'].to_numpy(),
-                                                          pass_nspikes=ldf['pass_nspikes'].to_numpy(),
-                                                          precess_mask=ldf['precess_exist'].to_numpy(),
-                                                          kappa=None, bins=aedges_precess)
-            # spikes_angles = np.concatenate(ldf['spikeangle'].to_list())
-            # precess_angle_low, _, _ = compute_precessangle_anglesp(pass_angles=ldf['mean_anglesp'].to_numpy(),
-            #                                                        anglesp=spikes_angles,
-            #                                                        precess_mask=ldf['precess_exist'].to_numpy(),
-            #                                                        kappa=kappa_precess, bins=None)
-            # _, _, postdoc_dens_low = compute_precessangle_anglesp(pass_angles=ldf['mean_anglesp'].to_numpy(),
-            #                                                       anglesp=spikes_angles,
-            #                                                       precess_mask=ldf['precess_exist'].to_numpy(),
-            #                                                       kappa=None, bins=aedges_precess)
-
-
-
-            (_, passbins_p_low, passbins_np_low, _) = postdoc_dens_low
-            all_passbins_low = passbins_p_low + passbins_np_low
-            numpass_at_precess_low = get_numpass_at_angle(target_angle=precess_angle_low, aedge=aedges_precess,
-                                                          all_passbins=all_passbins_low)
-        else:
-            precess_angle_low = None
-            numpass_at_precess_low = None
-
-        precess_angle_low_list.append(precess_angle_low)
-        numpass_at_precess_low_list.append(numpass_at_precess_low)
-    print()
-    df['precess_angle_low'] = precess_angle_low_list
-    df['numpass_at_precess_low'] = numpass_at_precess_low_list
-    return df
-
 
 def main():
     # # Setting
@@ -1149,14 +1090,11 @@ def main():
 
     # # Loading
     df = pd.read_pickle(data_pth)
-    # df = recompute_precessangle(df, kappa=1, CA3nsp_thresh=5)
-    # check_pass_nspikes(df)
 
     # # Analysis
     omniplot_singlefields(df, save_dir=join(save_dir, 'fig1'))
-    # figure2(df, save_dir=join(save_dir, 'fig2'))
-    # plot_both_slope_offset(df=df, save_dir=join(save_dir, 'fig3'))
-
+    figure2(df, save_dir=join(save_dir, 'fig2'))
+    plot_both_slope_offset(df=df, save_dir=join(save_dir, 'fig3'))
 
     # # Archive
     # plot_precession_pvals(singlefield_df, save_dir)

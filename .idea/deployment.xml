@@ -10,10 +10,16 @@
           <excludedPaths>
             <excludedPath path="/check" />
             <excludedPath path="/data" />
-            <excludedPath path="/matlab" />
             <excludedPath path="/results" />
             <excludedPath path="/archive" />
           </excludedPaths>
+        </serverdata>
+      </paths>
+      <paths name="nemo1">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
         </serverdata>
       </paths>
     </serverData>

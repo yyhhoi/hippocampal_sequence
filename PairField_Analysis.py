@@ -2713,15 +2713,15 @@ def main():
     # expdf = expdf[expdf['num_spikes_pair']>100].reset_index(drop=True)
 
     # # Analysis
-    # omniplot_pairfields(expdf, save_dir=join(figure_dir, 'fig4'))  # Fig 4
-    # compare_single_vs_pair_directionality()  # Fig 4, without plotting
-    # plot_example_correlograms(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
-    # plot_pair_correlation(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
-    # plot_example_exin(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 exintrinsic example
-    # plot_exintrinsic(expdf, save_dir)  # Fig 6 ex-in scatter
-    # plot_pairangle_similarity_analysis(expdf, save_dir=figure_dir)  # Fig 6
-    # plot_intrinsic_precession_property(expdf, plot_example=True, save_dir=join(figure_dir, 'fig7'))  # Fig 7 Intrinsic direction
-    # plot_leading_enslaved_analysis(expdf, save_dir='writting/figures/fig8')  # Fig 8 Leading-Enslaved analysis
+    omniplot_pairfields(expdf, save_dir=join(figure_dir, 'fig4'))  # Fig 4
+    compare_single_vs_pair_directionality()  # Fig 4, without plotting
+    plot_example_correlograms(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
+    plot_pair_correlation(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
+    plot_example_exin(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 exintrinsic example
+    plot_exintrinsic(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 ex-in scatter
+    plot_pairangle_similarity_analysis(expdf, save_dir=figure_dir)  # Fig 6
+    plot_intrinsic_precession_property(expdf, plot_example=True, save_dir=join(figure_dir, 'fig7'))  # Fig 7 Intrinsic direction
+    plot_leading_enslaved_analysis(expdf, save_dir='writting/figures/fig8')  # Fig 8 Leading-Enslaved analysis
     BothParallelOppositeAnalysis(expdf, save_dir=join(figure_dir, 'fig9'))  # Fig 9 Four-cases
 
     # # Archive

@@ -83,7 +83,7 @@ def plot_lowspikepass_dist(df, save_dir):
 
 
 if __name__ == '__main__':
-    data_pth = 'results/emankin/singlefield_df_NoShuffle.pickle'
+    data_pth = 'results/emankin/singlefield_df.pickle'
     df = pd.read_pickle(data_pth)
     save_dir = 'result_plots/author_response'
     os.makedirs(save_dir, exist_ok=True)

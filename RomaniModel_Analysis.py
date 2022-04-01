@@ -687,8 +687,8 @@ def main():
     os.makedirs(join(figure_dir, 'fig10'), exist_ok=True)
     os.makedirs(join(figure_dir, 'fig11'), exist_ok=True)
 
-    # single_simdf = load_pickle('results/sim/singlefield_df.pickle')
-    # singlefield_analysis_Romani(single_simdf, save_dir=join(figure_dir, 'fig10'))  # 0.85
+    single_simdf = load_pickle('results/sim/singlefield_df.pickle')
+    singlefield_analysis_Romani(single_simdf, save_dir=join(figure_dir, 'fig10'))  # 0.85
 
     pair_simdf = load_pickle('results/sim/pairfield_df.pickle')
     pair_simdf['border'] = (pair_simdf['border1'] & pair_simdf['border2'])
