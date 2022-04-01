@@ -3,10 +3,11 @@ This pipeline guide describes the processing and analysis steps which lead to th
 <div class="csl-entry">Yiu, Y.-H., Leutgeb, J. K., &#38; Leibold, C. (2022). Directional Tuning of Phase Precession Properties in the Hippocampus. <i>The Journal of Neuroscience</i>, <i>42</i>(11), 2282–2297. https://doi.org/10.1523/jneurosci.1569-21.2021</div>
 
 # Step 1 Matlab processing
-Electrophysiological data recorded by Mankin is first processed by a Matlab script.
+Electrophysiological data from Mankin et al. in 2012 and 2015 is first processed by a Matlab script.
 The script mainly segments and identifies the place fields. Pair identification is also done here.
 1. Run [matlab/emankin_preprocessing.m](matlab/emankin_preprocessing.m) to pre-process the raw place cell data at ./data/emankin/
 2. It generates the matlab structure data file ./data/emankin/emankindata_processed.mat
+
 
 # Step 2 Conversion to python-readable data
 The matlab data is then converted to a python dataframe.
@@ -43,5 +44,10 @@ This part simulates the model, pre-processes and analyzes the results (Fig 10 an
 2. Run [RomaniModel_Preprocess.py](RomaniModel_Preprocess.py) and produce preprocessed files at results/sim/singlefield_df.pickle and results/sim/pairfield_df.pickle
 3. Run [RomaniModel_Analysis.py](RomaniModel_Analysis.py) and produce figure 10 and 11 at ./writting/figures/ , also statistical results at ./writting/stats/
 
-For the details of the model, please see 
+# References
+
+<div class="csl-entry">Mankin, E. A., Diehl, G. W., Sparks, F. T., Leutgeb, S., &#38; Leutgeb, J. K. (2015). Hippocampal CA2 activity patterns change over time to a larger extent than between spatial contexts. <i>Neuron</i>, <i>85</i>(1), 190–201. https://doi.org/10.1016/j.neuron.2014.12.001.Hippocampal</div>
+<br/>
+<div class="csl-entry">Mankin, E. A., Sparks, F. T., Slayyeh, B., Sutherland, R. J., Leutgeb, S., &#38; Leutgeb, J. K. (2012). Neuronal code for extended time in the hippocampus. <i>Proceedings of the National Academy of Sciences</i>, <i>109</i>(47), 19462–19467. https://doi.org/10.1073/pnas.1214107109</div>
+<br/>
 <div class="csl-entry">Romani, S., &#38; Tsodyks, M. (2015). Short-term plasticity based network model of place cells dynamics. <i>Hippocampus</i>, <i>25</i>(1), 94–105.</div>
