@@ -5,7 +5,7 @@
       <paths name="hippocampus">
         <serverdata>
           <mappings>
-            <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/" local="$PROJECT_DIR$" web="" />
           </mappings>
           <excludedPaths>
             <excludedPath path="/check" />
@@ -13,13 +13,6 @@
             <excludedPath path="/results" />
             <excludedPath path="/archive" />
           </excludedPaths>
-        </serverdata>
-      </paths>
-      <paths name="nemo1">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
         </serverdata>
       </paths>
     </serverData>

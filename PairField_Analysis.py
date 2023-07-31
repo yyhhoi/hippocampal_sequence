@@ -21,7 +21,6 @@ from common.shared_vars import fontsize, ticksize, legendsize, titlesize, ca_c, 
 figext = 'png'
 # figext = 'eps'
 
-
 def omniplot_pairfields(expdf, save_dir=None):
     # # Initialization of stats
     stat_fn = 'fig4_pair_directionality.txt'
@@ -1160,6 +1159,27 @@ def plot_exintrinsic(expdf, save_dir):
 
     fig_exin.savefig(join(save_dir, 'exp_exintrinsic.png'), dpi=dpi)
     fig_exin.savefig(join(save_dir, 'exp_exintrinsic.eps'), dpi=dpi)
+
+    # Show spike counts in correlograms
+    print('Pair counts in correlograms')
+    for caid, (ca, cadf) in enumerate(smallerdf.groupby('ca')):
+
+        exdf = cadf[cadf['overlap_ratio'] > 0].reset_index(drop=True)
+        indf = cadf[cadf['overlap_ratio'] <= 0].reset_index(drop=True)
+        allpairspcount_list = []
+        for dfid, dfeach in enumerate([exdf, indf]):
+            dflabel = 'Ex' if dfid==0 else 'In'
+            allpairspcount = []
+            for dfrowi in range(dfeach.shape[0]):
+
+                corr_info_AB = dfeach.loc[dfrowi, 'corr_info_AB']
+                corr_info_BA = dfeach.loc[dfrowi, 'corr_info_BA']
+                allpairspcount.append(corr_info_AB[0].sum())
+                allpairspcount.append(corr_info_BA[0].sum())
+            mdn_pairspcount = np.median(allpairspcount)
+            allpairspcount_list.append(np.array(allpairspcount))
+            print('%s %s  %d'%(ca, dflabel, mdn_pairspcount))
+        print('%s ALL %d'%(ca, np.median(np.concatenate(allpairspcount_list))))
 
 
 def plot_pairangle_similarity_analysis(expdf, save_dir=None):
@@ -2713,16 +2733,16 @@ def main():
     # expdf = expdf[expdf['num_spikes_pair']>100].reset_index(drop=True)
 
     # # Analysis
-    omniplot_pairfields(expdf, save_dir=join(figure_dir, 'fig4'))  # Fig 4
-    compare_single_vs_pair_directionality()  # Fig 4, without plotting
-    plot_example_correlograms(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
-    plot_pair_correlation(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
-    plot_example_exin(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 exintrinsic example
+    # omniplot_pairfields(expdf, save_dir=join(figure_dir, 'fig4'))  # Fig 4
+    # compare_single_vs_pair_directionality()  # Fig 4, without plotting
+    # plot_example_correlograms(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
+    # plot_pair_correlation(expdf, save_dir=join(figure_dir, 'fig5'))  # Fig 5
+    # plot_example_exin(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 exintrinsic example
     plot_exintrinsic(expdf, save_dir=join(figure_dir, 'fig6'))  # Fig 6 ex-in scatter
-    plot_pairangle_similarity_analysis(expdf, save_dir=figure_dir)  # Fig 6
-    plot_intrinsic_precession_property(expdf, plot_example=True, save_dir=join(figure_dir, 'fig7'))  # Fig 7 Intrinsic direction
-    plot_leading_enslaved_analysis(expdf, save_dir='writting/figures/fig8')  # Fig 8 Leading-Enslaved analysis
-    BothParallelOppositeAnalysis(expdf, save_dir=join(figure_dir, 'fig9'))  # Fig 9 Four-cases
+    # plot_pairangle_similarity_analysis(expdf, save_dir=figure_dir)  # Fig 6
+    # plot_intrinsic_precession_property(expdf, plot_example=True, save_dir=join(figure_dir, 'fig7'))  # Fig 7 Intrinsic direction
+    # plot_leading_enslaved_analysis(expdf, save_dir='writting/figures/fig8')  # Fig 8 Leading-Enslaved analysis
+    # BothParallelOppositeAnalysis(expdf, save_dir=join(figure_dir, 'fig9'))  # Fig 9 Four-cases
 
     # # Archive
     # plot_ALL_example_correlograms(expdf)
